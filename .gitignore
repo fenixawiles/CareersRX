@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+.claude/
 
 # debug
 npm-debug.log*
@@ -39,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/app/generated/prisma
+
+# Local no-login sandbox persistence
+/data/*.sqlite
+/data/*.sqlite-*

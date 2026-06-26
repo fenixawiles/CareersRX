@@ -1,0 +1,1064 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum TokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  EMAIL_CHANGE
+  TEAM_INVITE
+}
+
+enum CompanyVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum BillingPlan {
+  FREE
+  BASIC
+  FEATURED
+  ENTERPRISE
+}
+
+enum CompanyRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum FacilityType {
+  ASSISTED_LIVING
+  MEMORY_CARE
+  SKILLED_NURSING
+  INDEPENDENT_LIVING
+  HOME_HEALTH
+  HOSPICE
+  ADULT_DAY_CARE
+  CCRC
+  OTHER
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  PRN
+  PER_DIEM
+  INTERNSHIP
+  VOLUNTEER
+}
+
+enum Shift {
+  DAY
+  EVENING
+  NIGHT
+  OVERNIGHT
+  WEEKEND
+  HOLIDAY
+  ON_CALL
+  FLEXIBLE
+}
+
+enum PayType {
+  HOURLY
+  ANNUAL
+  PER_DIEM
+}
+
+enum JobStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  EXPIRED
+  CLOSED
+  REJECTED
+}
+
+enum ModerationStatus {
+  UNASSIGNED
+  IN_REVIEW
+  COMPLETE
+}
+
+enum QuestionType {
+  YES_NO
+  TEXT
+  NUMBER
+  DATE
+  MULTIPLE_CHOICE
+  CHECKBOX
+  LICENSE_CONFIRM
+}
+
+enum ApplicationStatus {
+  PENDING
+  REVIEWED
+  PHONE_SCREEN
+  INTERVIEW
+  OFFERED
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+enum FileAssetPurpose {
+  SEEKER_RESUME
+  EMPLOYER_LOGO
+  RESUME_SNAPSHOT
+}
+
+enum ScanStatus {
+  NOT_SCANNED
+  PENDING
+  SCANNING
+  CLEAN
+  FLAGGED
+  ERROR
+}
+
+enum ProfileVisibility {
+  APPLIED_ONLY
+  EMPLOYERS_ONLY
+  PUBLIC
+}
+
+enum ReportCategory {
+  SCAM
+  DISCRIMINATORY_CONTENT
+  INACCURATE_INFO
+  DUPLICATE
+  EXPIRED_STILL_ACTIVE
+  OTHER
+}
+
+enum ReportSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ContactStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  SPAM
+}
+
+enum ResumeDocumentStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ResumeSectionType {
+  SUMMARY
+  EXPERIENCE
+  EDUCATION
+  SKILLS
+  LICENSES
+  CERTIFICATIONS
+  PREFERENCES
+  CUSTOM
+}
+
+enum ResumeSyncStatus {
+  SYNCED
+  RESUME_ONLY
+  NEEDS_REVIEW
+  CONFLICT
+  APPLICATION_SPECIFIC
+  AI_DRAFT
+}
+
+enum ResumeSyncProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  APPLIED
+}
+
+enum ResumeSyncScope {
+  RESUME_ONLY
+  PROFILE_UPDATE
+  PREFERENCES_UPDATE
+  CREATE_VARIANT
+  APPLICATION_PACKET
+}
+
+enum ResumeSyncTarget {
+  PROFILE
+  PREFERENCES
+  SKILLS
+  LICENSES
+  CERTIFICATIONS
+  WORK_HISTORY
+  EDUCATION
+  RESUME_VARIANT
+  APPLICATION_PACKET
+}
+
+enum CareerCredentialKind {
+  LICENSE
+  CERTIFICATION
+  CLEARANCE
+  TRAINING
+  DEGREE
+  OTHER
+}
+
+enum CareerCredentialStatus {
+  ACTIVE
+  EXPIRED
+  PENDING
+  REVIEW_REQUIRED
+}
+
+enum ApplicationPacketStatus {
+  DRAFT
+  READY
+  SUBMITTED
+  ARCHIVED
+}
+
+enum AiTaskType {
+  DETECT_RESUME_CHANGES
+  CLASSIFY_SYNC_SCOPE
+  DRAFT_RESUME_VARIANT
+  COMPARE_JOB_FIT
+}
+
+enum AiInteractionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum CareerSyncAction {
+  PROPOSAL_CREATED
+  PROPOSAL_ACCEPTED
+  PROPOSAL_REJECTED
+  PROFILE_UPDATED
+  PREFERENCES_UPDATED
+  RESUME_VERSION_CREATED
+  RESUME_VARIANT_CREATED
+  APPLICATION_PACKET_CREATED
+  AI_REQUESTED
+  AI_FAILED
+}
+
+// ─── Auth & Users ─────────────────────────────────────────────────────────────
+
+model User {
+  id               String     @id @default(cuid())
+  email            String     @unique
+  emailVerified    DateTime?
+  name             String?    // required by @auth/prisma-adapter; not surfaced in UI
+  image            String?    // required by @auth/prisma-adapter; not surfaced in UI
+  newEmail         String?
+  passwordHash     String
+  isAdmin          Boolean    @default(false)
+  status           UserStatus @default(ACTIVE)
+  legalHold        Boolean    @default(false)
+  failedLogins     Int        @default(0)
+  lockedUntil      DateTime?
+  mfaEnabled       Boolean    @default(false)
+  mfaSecretEnc     String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  deletedAt        DateTime?
+  anonymizedAt     DateTime?
+
+  // Auth.js
+  sessions                  Session[]
+  accounts                  Account[]
+
+  // Custom tokens
+  tokens                    Token[]
+  adminRecoveryCodes        AdminRecoveryCode[]
+
+  // Profiles
+  seekerProfile             SeekerProfile?
+  companyUsers              CompanyUser[]
+
+  // Notifications
+  notifPrefs                NotificationPreference?
+  notifications             Notification[]
+
+  // File assets uploaded by this user
+  fileAssets                FileAsset[]
+
+  // Contact form assignments
+  assignedContacts          ContactSubmission[]
+
+  // Application status change author
+  applicationStatusChanges  ApplicationStatusHistory[]
+
+  // Audit back-relations
+  actorAuditLogs            AuditLog[]   @relation("AuditActor")
+  subjectAuditLogs          AuditLog[]   @relation("AuditSubject")
+
+  // Company admin/billing back-relations
+  verifiedCompanies         Company[]    @relation("CompanyVerifiedBy")
+  activatedCompanies        Company[]    @relation("CompanyBillingActivatedBy")
+
+  // CompanyUser revocation back-relation
+  revokedCompanyUsers       CompanyUser[] @relation("CompanyUserRevoker")
+
+  // Job moderation back-relation
+  moderatedJobs             Job[]        @relation("JobModerator")
+
+  // JobView back-relation
+  jobViews                  JobView[]
+
+  // JobReport back-relations
+  reportedJobs              JobReport[]  @relation("JobReporter")
+  resolvedReports           JobReport[]  @relation("ReportResolver")
+}
+
+model Session {
+  id                String   @id @default(cuid())
+  sessionToken      String   @unique
+  userId            String
+  expires           DateTime
+  lastSeenAt        DateTime @default(now())
+  userAgent         String?
+  ipHash            String?
+  selectedCompanyId String?
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+// Custom token table (replaces Auth.js VerificationToken for all token flows)
+model Token {
+  id        String    @id @default(cuid())
+  userId    String?
+  email     String
+  type      TokenType
+  tokenHash String    @unique
+  metadata  Json?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, type])
+}
+
+model AdminRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @unique
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Company & Facilities ─────────────────────────────────────────────────────
+
+model Company {
+  id                String                    @id @default(cuid())
+  slug              String                    @unique
+  name              String
+  website           String?
+  description       String?                   @db.Text
+  phone             String?
+  contactEmail      String
+
+  // Cached public URL for logo; FileAsset (entityType="employer_logo") tracks file lifecycle
+  logoUrl           String?
+
+  verificationStatus CompanyVerificationStatus @default(PENDING)
+  verificationNotes  String?
+  verifiedAt         DateTime?
+  verifiedById       String?
+  verifiedBy         User?                    @relation("CompanyVerifiedBy", fields: [verifiedById], references: [id])
+
+  billingPlan        BillingPlan              @default(FREE)
+  billingActivatedAt DateTime?
+  billingActivatedBy String?
+  billingActivator   User?                    @relation("CompanyBillingActivatedBy", fields: [billingActivatedBy], references: [id])
+
+  // Applicant notification preferences — control which status changes email seekers
+  notifyApplicantOnReviewed    Boolean @default(false)
+  notifyApplicantOnPhoneScreen Boolean @default(true)
+  notifyApplicantOnInterview   Boolean @default(true)
+  notifyApplicantOnOffer       Boolean @default(true)
+  notifyApplicantOnRejection   Boolean @default(true)
+  notifyApplicantOnHired       Boolean @default(false)
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  users             CompanyUser[]
+  facilities        Facility[]
+  jobs              Job[]
+}
+
+model CompanyUser {
+  id            String      @id @default(cuid())
+  userId        String
+  companyId     String
+  role          CompanyRole @default(MEMBER)
+  inviteTokenId String?
+  joinedAt      DateTime    @default(now())
+  revokedAt     DateTime?
+  revokedById   String?
+  revokedByUser User?       @relation("CompanyUserRevoker", fields: [revokedById], references: [id])
+
+  user          User        @relation(fields: [userId], references: [id])
+  company       Company     @relation(fields: [companyId], references: [id])
+  postedJobs    Job[]
+
+  @@unique([userId, companyId])
+  @@index([companyId, revokedAt])
+}
+
+model Facility {
+  id        String       @id @default(cuid())
+  companyId String
+  name      String
+  type      FacilityType
+  address   String
+  city      String
+  state     String
+  zip       String
+  phone     String?
+  createdAt DateTime     @default(now())
+  deletedAt DateTime?
+
+  company   Company      @relation(fields: [companyId], references: [id])
+  jobs      Job[]        // Job uses onDelete: SetNull on this relation
+}
+
+// ─── Jobs ─────────────────────────────────────────────────────────────────────
+
+model Job {
+  id                    String           @id @default(cuid())
+  slug                  String           @unique
+  companyId             String
+  facilityId            String?
+  postedById            String
+
+  title                 String           @db.VarChar(120)
+  description           String           @db.Text
+  requirements          String?          @db.Text
+  responsibilities      String?          @db.Text
+  benefits              String?          @db.Text
+  physicalRequirements  String?          @db.Text
+
+  category              String
+  facilityType          FacilityType?
+  jobType               JobType          @default(FULL_TIME)
+  shifts                Shift[]
+  schedule              String?          @db.VarChar(200)
+  hasShiftDifferential  Boolean          @default(false)
+
+  city                  String
+  state                 String
+  zip                   String?
+  isRemote              Boolean          @default(false)
+
+  salaryMinCents        Int?
+  salaryMaxCents        Int?
+  payType               PayType?
+  showSalary            Boolean          @default(true)
+  signOnBonusCents      Int?
+
+  requiredLicenses      String[]
+  requiredCertifications String[]
+  requiredYearsExp      Int?
+  bgCheckRequired       Boolean          @default(true)
+  drugTestRequired      Boolean          @default(false)
+
+  eeoStatement          String           @db.Text
+  termsAcceptedAt       DateTime?
+  termsAcceptedByIpHash String?
+
+  externalApplyUrl      String?
+  externalApplyTracked  Boolean          @default(true)
+
+  status                JobStatus        @default(DRAFT)
+  moderationStatus      ModerationStatus @default(UNASSIGNED)
+  moderatorId           String?
+  moderator             User?            @relation("JobModerator", fields: [moderatorId], references: [id])
+  moderatorNote         String?
+  rejectedReason        String?
+
+  pendingEditJobId      String?
+  originalJob           Job?             @relation("JobPendingEdit", fields: [pendingEditJobId], references: [id])
+  pendingEdits          Job[]            @relation("JobPendingEdit")
+
+  featured              Boolean          @default(false)
+  isDuplicate           Boolean          @default(false)
+
+  publishedAt           DateTime?
+  expiresAt             DateTime?
+  expiryWarningSentAt   DateTime?
+  closedAt              DateTime?
+  closedReason          String?
+
+  // Managed by raw SQL trigger (see migrations/add_search_vector migration)
+  searchVector          Unsupported("tsvector")?
+
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  deletedAt             DateTime?
+
+  company               Company          @relation(fields: [companyId], references: [id])
+  facility              Facility?        @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+  postedByUser          CompanyUser      @relation(fields: [postedById], references: [id])
+  screeningQuestions    ScreeningQuestion[]
+  applications          Application[]
+  applicationPackets    ApplicationPacket[]
+  savedBy               SavedJob[]
+  views                 JobView[]
+  reports               JobReport[]
+
+  @@index([status, state, category])
+  @@index([status, publishedAt])
+  @@index([companyId, status])
+  @@index([expiresAt, status])
+}
+
+model ScreeningQuestion {
+  id             String       @id @default(cuid())
+  jobId          String
+  question       String       @db.VarChar(500)
+  type           QuestionType
+  options        String[]
+  required       Boolean      @default(false)
+  knockout       Boolean      @default(false)
+  knockoutAnswer String?
+  order          Int
+
+  job            Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  answers        ScreeningAnswer[]
+}
+
+// ─── File Assets ──────────────────────────────────────────────────────────────
+
+model FileAsset {
+  id           String           @id @default(cuid())
+  storagePath  String           @unique
+  displayName  String?
+  contentType  String
+  sizeBytes    Int
+  purpose      FileAssetPurpose
+  ownerId      String?
+  owner        User?            @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  entityType   String?
+  entityId     String?
+  scanStatus   ScanStatus       @default(NOT_SCANNED)
+  scanResultAt DateTime?
+  deletedAt    DateTime?
+  createdAt    DateTime         @default(now())
+
+  applicationSnapshots Application[]
+
+  @@index([ownerId])
+  @@index([entityType, entityId])
+  @@index([scanStatus])
+  @@index([deletedAt])
+}
+
+// ─── Applications ─────────────────────────────────────────────────────────────
+
+model Application {
+  id                    String            @id @default(cuid())
+  jobId                 String
+  seekerId              String
+  coverLetter           String?           @db.Text
+  resumeSnapshotAssetId String?
+  resumeSnapshotAsset   FileAsset?        @relation(fields: [resumeSnapshotAssetId], references: [id])
+  status                ApplicationStatus @default(PENDING)
+  knockedOut            Boolean           @default(false)
+  withdrawnAt           DateTime?
+  withdrawnReason       String?
+  employerNotes         String?           @db.Text
+  source                String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  job                   Job               @relation(fields: [jobId], references: [id])
+  seeker                SeekerProfile     @relation(fields: [seekerId], references: [id])
+  statusHistory         ApplicationStatusHistory[]
+  screeningAnswers      ScreeningAnswer[]
+
+  @@unique([jobId, seekerId])
+  @@index([seekerId, status])
+  @@index([jobId, status])
+}
+
+model ApplicationStatusHistory {
+  id            String             @id @default(cuid())
+  applicationId String
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  changedById   String
+  changedBy     User               @relation(fields: [changedById], references: [id])
+  note          String?
+  changedAt     DateTime           @default(now())
+
+  application   Application        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+}
+
+model ScreeningAnswer {
+  id            String            @id @default(cuid())
+  applicationId String
+  questionId    String
+  answer        String
+
+  application   Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  question      ScreeningQuestion @relation(fields: [questionId], references: [id])
+}
+
+// ─── Seeker Profile ───────────────────────────────────────────────────────────
+
+model SeekerProfile {
+  id                  String            @id @default(cuid())
+  userId              String            @unique
+  firstName           String            @db.VarChar(100)
+  lastName            String            @db.VarChar(100)
+  phone               String?
+  city                String?
+  state               String?
+  zip                 String?
+  bio                 String?           @db.Text
+
+  skills              String[]
+  licenses            String[]
+  certifications      String[]
+  preferredCategories String[]
+  preferredJobTypes   JobType[]
+  preferredStates     String[]
+  preferredShifts     Shift[]
+  desiredPayMinCents  Int?
+  willingToRelocate   Boolean           @default(false)
+  travelRadiusMiles   Int?
+
+  profileComplete     Boolean           @default(false)
+  profileVisibility   ProfileVisibility @default(APPLIED_ONLY)
+
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications        Application[]
+  savedJobs           SavedJob[]
+  savedSearches       SavedSearch[]
+  resumeDocuments     ResumeDocument[]
+  resumeSyncProposals ResumeSyncProposal[]
+  careerCredentials   CareerCredential[]
+  workHistoryEntries  WorkHistoryEntry[]
+  educationEntries    EducationEntry[]
+  applicationPackets  ApplicationPacket[]
+  aiInteractions      AiInteraction[]
+  careerSyncAuditLogs CareerSyncAuditLog[]
+}
+
+// ─── Live Résumé & Career Sync ───────────────────────────────────────────────
+
+model ResumeDocument {
+  id                 String               @id @default(cuid())
+  seekerId           String
+  title              String               @db.VarChar(160)
+  targetRole         String?              @db.VarChar(160)
+  status             ResumeDocumentStatus @default(DRAFT)
+  variantLabel       String?              @db.VarChar(120)
+  baseDocumentId     String?
+  activeVersionId    String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  archivedAt         DateTime?
+
+  seeker             SeekerProfile       @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+  baseDocument       ResumeDocument?     @relation("ResumeDocumentVariants", fields: [baseDocumentId], references: [id], onDelete: SetNull)
+  variants           ResumeDocument[]    @relation("ResumeDocumentVariants")
+  activeVersion      ResumeVersion?      @relation("ActiveResumeVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  versions           ResumeVersion[]     @relation("DocumentVersions")
+  sections           ResumeSection[]
+  syncProposals      ResumeSyncProposal[]
+  applicationPackets ApplicationPacket[]
+
+  @@index([seekerId, status])
+  @@index([baseDocumentId])
+  @@index([activeVersionId])
+}
+
+model ResumeVersion {
+  id                 String           @id @default(cuid())
+  documentId         String
+  versionNumber      Int
+  contentJson        Json
+  renderedText       String           @db.Text
+  renderedHtml       String?          @db.Text
+  sourceType         String           @db.VarChar(80)
+  aiGenerated        Boolean          @default(false)
+  createdById        String?
+  createdAt          DateTime         @default(now())
+
+  document           ResumeDocument   @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  activeForDocuments ResumeDocument[] @relation("ActiveResumeVersion")
+  syncProposals      ResumeSyncProposal[]
+  applicationPackets ApplicationPacket[]
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId, createdAt])
+}
+
+model ResumeSection {
+  id               String           @id @default(cuid())
+  documentId       String
+  type             ResumeSectionType
+  title            String           @db.VarChar(140)
+  content          String           @db.Text
+  order            Int
+  linkedEntityType String?
+  linkedEntityId   String?
+  syncStatus       ResumeSyncStatus @default(RESUME_ONLY)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  document         ResumeDocument   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  syncProposals    ResumeSyncProposal[]
+
+  @@index([documentId, order])
+  @@index([linkedEntityType, linkedEntityId])
+}
+
+model ResumeSyncProposal {
+  id              String                    @id @default(cuid())
+  seekerId        String
+  documentId      String
+  versionId       String?
+  sectionId       String?
+  aiInteractionId String?
+  target          ResumeSyncTarget
+  scope           ResumeSyncScope?
+  status          ResumeSyncProposalStatus @default(PENDING)
+  title           String                    @db.VarChar(160)
+  summary         String                    @db.Text
+  reason          String?                   @db.Text
+  confidence      Int?
+  proposedValue   Json
+  beforeValue     Json?
+  appliedAt       DateTime?
+  decidedAt       DateTime?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  seeker          SeekerProfile             @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+  document        ResumeDocument            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version         ResumeVersion?            @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  section         ResumeSection?            @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  aiInteraction   AiInteraction?            @relation(fields: [aiInteractionId], references: [id], onDelete: SetNull)
+
+  @@index([seekerId, status])
+  @@index([documentId, status])
+  @@index([aiInteractionId])
+}
+
+model CareerCredential {
+  id               String                 @id @default(cuid())
+  seekerId         String
+  kind             CareerCredentialKind
+  name             String                 @db.VarChar(160)
+  issuer           String?                @db.VarChar(160)
+  state            String?                @db.VarChar(2)
+  status           CareerCredentialStatus @default(ACTIVE)
+  licenseNumber    String?                @db.VarChar(80)
+  issuedAt         DateTime?
+  expiresAt        DateTime?
+  sourceProposalId String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  seeker           SeekerProfile          @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+
+  @@index([seekerId, kind])
+  @@index([name, state])
+}
+
+model WorkHistoryEntry {
+  id           String   @id @default(cuid())
+  seekerId     String
+  employer     String   @db.VarChar(160)
+  title        String   @db.VarChar(160)
+  facilityType String?
+  city         String?
+  state        String?
+  startDate    DateTime?
+  endDate      DateTime?
+  current      Boolean  @default(false)
+  description  String?  @db.Text
+  highlights   String[]
+  skills       String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  seeker       SeekerProfile @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+
+  @@index([seekerId, startDate])
+}
+
+model EducationEntry {
+  id          String   @id @default(cuid())
+  seekerId    String
+  school      String   @db.VarChar(180)
+  degree      String?  @db.VarChar(160)
+  field       String?  @db.VarChar(160)
+  startDate   DateTime?
+  endDate     DateTime?
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  seeker      SeekerProfile @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+
+  @@index([seekerId, school])
+}
+
+model ApplicationPacket {
+  id                  String                  @id @default(cuid())
+  seekerId            String
+  jobId               String?
+  resumeDocumentId    String?
+  resumeVersionId     String?
+  status              ApplicationPacketStatus @default(DRAFT)
+  title               String                  @db.VarChar(180)
+  coverLetter         String?                 @db.Text
+  fitSummary          String?                 @db.Text
+  missingRequirements Json?
+  supportedMatches    Json?
+  snapshotMetadata    Json?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  seeker              SeekerProfile           @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+  job                 Job?                    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  resumeDocument      ResumeDocument?         @relation(fields: [resumeDocumentId], references: [id], onDelete: SetNull)
+  resumeVersion       ResumeVersion?          @relation(fields: [resumeVersionId], references: [id], onDelete: SetNull)
+
+  @@index([seekerId, status])
+  @@index([jobId])
+  @@index([resumeDocumentId])
+}
+
+model AiInteraction {
+  id             String              @id @default(cuid())
+  seekerId       String
+  task           AiTaskType
+  model          String              @db.VarChar(120)
+  fallbackModel  String?             @db.VarChar(120)
+  status         AiInteractionStatus @default(PENDING)
+  schemaVersion  String              @default("career-sync-v1")
+  promptMetadata Json?
+  inputMetadata  Json?
+  parsedOutput   Json?
+  rawResponseId  String?
+  error          String?             @db.Text
+  inputTokens    Int?
+  outputTokens   Int?
+  costMicros     Int?
+  createdAt      DateTime            @default(now())
+  completedAt    DateTime?
+
+  seeker         SeekerProfile        @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+  syncProposals  ResumeSyncProposal[]
+
+  @@index([seekerId, task, createdAt])
+  @@index([status, createdAt])
+}
+
+model CareerSyncAuditLog {
+  id          String           @id @default(cuid())
+  seekerId    String
+  actorId     String?
+  action      CareerSyncAction
+  source      String           @db.VarChar(120)
+  target      String           @db.VarChar(120)
+  entityId    String?
+  beforeValue Json?
+  afterValue  Json?
+  createdAt   DateTime         @default(now())
+
+  seeker      SeekerProfile    @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+
+  @@index([seekerId, createdAt])
+  @@index([target, entityId])
+}
+
+// ─── Saved, Searches, Views, Reports ─────────────────────────────────────────
+
+model SavedJob {
+  seekerId  String
+  jobId     String
+  savedAt   DateTime      @default(now())
+
+  seeker    SeekerProfile @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+  job       Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@id([seekerId, jobId])
+}
+
+model SavedSearch {
+  id        String        @id @default(cuid())
+  seekerId  String
+  name      String?       @db.VarChar(100)
+  queryJson Json
+  createdAt DateTime      @default(now())
+
+  seeker    SeekerProfile @relation(fields: [seekerId], references: [id], onDelete: Cascade)
+}
+
+model JobView {
+  id       String   @id @default(cuid())
+  jobId    String
+  ipHash   String?
+  userId   String?
+  viewer   User?    @relation(fields: [userId], references: [id])
+  viewedAt DateTime @default(now())
+
+  job      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, viewedAt])
+}
+
+model JobReport {
+  id           String         @id @default(cuid())
+  jobId        String
+  reporterId   String?
+  reporter     User?          @relation("JobReporter", fields: [reporterId], references: [id])
+  category     ReportCategory
+  severity     ReportSeverity @default(MEDIUM)
+  details      String?        @db.Text
+  resolved     Boolean        @default(false)
+  resolvedById String?
+  resolvedBy   User?          @relation("ReportResolver", fields: [resolvedById], references: [id])
+  resolvedAt   DateTime?
+  adminNote    String?
+
+  createdAt    DateTime       @default(now())
+  job          Job            @relation(fields: [jobId], references: [id])
+}
+
+// ─── Notifications, Audit, Infrastructure ────────────────────────────────────
+
+model NotificationPreference {
+  id             String  @id @default(cuid())
+  userId         String  @unique
+  emailAppStatus Boolean @default(true)
+  emailMarketing Boolean @default(false)
+  inAppEnabled   Boolean @default(true)
+
+  user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation("AuditActor", fields: [actorId], references: [id])
+  subjectId String?
+  subject   User?    @relation("AuditSubject", fields: [subjectId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipHash    String?
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+model ContactSubmission {
+  id         String        @id @default(cuid())
+  name       String
+  email      String
+  subject    String
+  message    String        @db.Text
+  isSpam     Boolean       @default(false)
+  status     ContactStatus @default(OPEN)
+  assigneeId String?
+  assignee   User?         @relation(fields: [assigneeId], references: [id])
+  adminNotes String?       @db.Text
+  resolvedAt DateTime?
+  createdAt  DateTime      @default(now())
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String
+  eventId     String
+  eventType   String
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([provider, eventId])
+}
+
+model EmailSuppression {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  reason          String
+  providerEventId String?
+  createdAt       DateTime @default(now())
+}

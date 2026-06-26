@@ -1,65 +1,189 @@
-import Image from "next/image";
+import Link from "next/link";
+import { Search, Heart, ShieldCheck, Users, ArrowRight } from "lucide-react";
+import { prisma } from "@/lib/prisma";
+import { Button } from "@/components/ui/Button";
+import { JobCard } from "@/components/jobs/JobCard";
+import { JOB_CATEGORIES, FOCUS_STATES } from "@/lib/constants";
 
-export default function Home() {
+export default async function HomePage() {
+  const [featuredJobs, jobCount, companyCount] = await Promise.all([
+    prisma.job.findMany({
+      where: { status: "ACTIVE" },
+      orderBy: { publishedAt: "desc" },
+      take: 6,
+      include: { company: { select: { name: true, logoUrl: true } } },
+    }),
+    prisma.job.count({ where: { status: "ACTIVE" } }),
+    prisma.company.count({ where: { verificationStatus: "APPROVED" } }),
+  ]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <>
+      {/* ── Hero ── */}
+      <section className="bg-gradient-to-b from-primary-light to-background">
+        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24">
+          <div className="mx-auto max-w-3xl text-center">
+            <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
+              Keep your career profile{" "}
+              <span className="text-primary">application-ready</span>
+            </h1>
+            <p className="mt-5 text-lg text-muted sm:text-xl">
+              CareersRX starts with healthcare and senior care jobs, then connects your
+              profile, live résumé, and application materials so every next move is easier.
+            </p>
+
+            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <Button href="/register/seeker" size="lg">
+                Create Account + Live Résumé
+              </Button>
+              <Button href="/demo" variant="outline" size="lg">
+                Try the Sandbox
+              </Button>
+            </div>
+
+            <form
+              action="/jobs"
+              className="mx-auto mt-6 flex max-w-2xl flex-col gap-3 rounded-2xl border border-border bg-surface p-3 shadow-sm sm:flex-row"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              <div className="flex flex-1 items-center gap-2 px-3">
+                <Search size={20} className="shrink-0 text-muted" />
+                <input
+                  type="text"
+                  name="q"
+                  placeholder="Job title, keyword, or company"
+                  aria-label="Search jobs"
+                  className="w-full bg-transparent py-2.5 text-base outline-none placeholder:text-muted"
+                />
+              </div>
+              <Button type="submit" size="md" className="sm:w-auto">
+                Search Jobs
+              </Button>
+            </form>
+
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-sm">
+              <span className="text-muted">Popular:</span>
+              {["Registered Nurse", "CNA", "Caregiver", "Memory Care"].map((term) => (
+                <Link
+                  key={term}
+                  href={`/jobs?q=${encodeURIComponent(term)}`}
+                  className="rounded-full border border-border bg-surface px-3 py-1 text-foreground hover:border-primary hover:text-primary"
+                >
+                  {term}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Stats ── */}
+      <section className="border-y border-border bg-surface">
+        <div className="mx-auto grid max-w-7xl grid-cols-3 divide-x divide-border px-4 sm:px-6">
+          {[
+            { value: `${jobCount}+`, label: "Open positions" },
+            { value: `${companyCount}+`, label: "Communities hiring" },
+            { value: `${FOCUS_STATES.length}`, label: "States served" },
+          ].map((stat) => (
+            <div key={stat.label} className="px-2 py-8 text-center">
+              <div className="text-3xl font-bold text-primary sm:text-4xl">{stat.value}</div>
+              <div className="mt-1 text-sm text-muted">{stat.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Featured jobs ── */}
+      <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-foreground sm:text-3xl">
+              Latest healthcare opportunities
+            </h2>
+            <p className="mt-1 text-muted">Fresh roles from the first CareersRX vertical.</p>
+          </div>
+          <Button href="/jobs" variant="outline" size="sm" className="shrink-0">
+            View all <ArrowRight size={16} />
+          </Button>
+        </div>
+
+        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {featuredJobs.map((job) => (
+            <JobCard key={job.id} job={job} />
+          ))}
+        </div>
+      </section>
+
+      {/* ── How it works ── */}
+      <section className="bg-surface">
+        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
+          <h2 className="text-center text-2xl font-bold text-foreground sm:text-3xl">
+            Why CareersRX
+          </h2>
+          <div className="mt-12 grid gap-8 md:grid-cols-3">
+            {[
+              {
+                icon: Heart,
+                title: "Healthcare first",
+                body: "We’re starting with assisted living, memory care, skilled nursing, hospice, and related communities before expanding into more fields.",
+              },
+              {
+                icon: ShieldCheck,
+                title: "Verified employers",
+                body: "We review every hiring community before their jobs go live, so you can apply with confidence.",
+              },
+              {
+                icon: Users,
+                title: "Career profile ready",
+                body: "A live profile and résumé system designed to keep candidates ready for applications without repetitive data entry.",
+              },
+            ].map((feature) => (
+              <div key={feature.title} className="text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-light text-primary">
+                  <feature.icon size={28} />
+                </div>
+                <h3 className="mt-4 text-lg font-semibold text-foreground">{feature.title}</h3>
+                <p className="mt-2 text-muted">{feature.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Browse by category ── */}
+      <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
+        <h2 className="text-2xl font-bold text-foreground sm:text-3xl">Browse by role</h2>
+        <div className="mt-6 flex flex-wrap gap-2">
+          {JOB_CATEGORIES.map((cat) => (
+            <Link
+              key={cat}
+              href={`/jobs?category=${encodeURIComponent(cat)}`}
+              className="rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:text-primary"
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              {cat}
+            </Link>
+          ))}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </section>
+
+      {/* ── Employer CTA ── */}
+      <section className="bg-primary">
+        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
+          <div className="flex flex-col items-center justify-between gap-6 text-center md:flex-row md:text-left">
+            <div className="max-w-xl">
+              <h2 className="text-2xl font-bold text-white sm:text-3xl">
+                Hiring in healthcare?
+              </h2>
+              <p className="mt-2 text-primary-light">
+                Reach compassionate, qualified candidates in our first vertical. Post your
+                first job free.
+              </p>
+            </div>
+            <Button href="/employers" variant="secondary" size="lg" className="shrink-0">
+              Post a Job
+            </Button>
+          </div>
         </div>
-      </main>
-    </div>
+      </section>
+    </>
   );
 }
