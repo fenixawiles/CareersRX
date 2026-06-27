@@ -40,7 +40,10 @@ async function getJob(slug: string) {
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params;
-  const job = await getJob(slug);
+  const job = await getJob(slug).catch((error) => {
+    console.warn("CareersRX job metadata is unavailable.", error);
+    return null;
+  });
   if (!job || job.status !== "ACTIVE") {
     return { title: "Job Not Available" };
   }
@@ -55,7 +58,14 @@ export default async function JobDetailPage({ params }: { params: Params }) {
   await connection();
 
   const { slug } = await params;
-  const job = await getJob(slug);
+  const job = await getJob(slug).catch((error) => {
+    console.warn("CareersRX job detail data is unavailable.", error);
+    return undefined;
+  });
+
+  if (job === undefined) {
+    return <JobDataUnavailable />;
+  }
 
   if (!job) notFound();
 
@@ -66,16 +76,21 @@ export default async function JobDetailPage({ params }: { params: Params }) {
 
   const salary = formatSalaryRange(job);
 
-  const relatedJobs = await prisma.job.findMany({
-    where: {
-      status: "ACTIVE",
-      category: job.category,
-      id: { not: job.id },
-    },
-    take: 3,
-    orderBy: { publishedAt: "desc" },
-    include: { company: { select: { name: true, logoUrl: true } } },
-  });
+  const relatedJobs = await prisma.job
+    .findMany({
+      where: {
+        status: "ACTIVE",
+        category: job.category,
+        id: { not: job.id },
+      },
+      take: 3,
+      orderBy: { publishedAt: "desc" },
+      include: { company: { select: { name: true, logoUrl: true } } },
+    })
+    .catch((error) => {
+      console.warn("CareersRX related jobs are unavailable.", error);
+      return [];
+    });
 
   return (
     <>
@@ -220,6 +235,26 @@ export default async function JobDetailPage({ params }: { params: Params }) {
         ) : null}
       </div>
     </>
+  );
+}
+
+function JobDataUnavailable() {
+  return (
+    <div className="mx-auto max-w-xl px-4 py-20 text-center sm:px-6">
+      <h1 className="text-2xl font-bold text-foreground">Job listings are being prepared</h1>
+      <p className="mt-2 text-muted">
+        CareersRX is online, but the production jobs database is not connected yet. You can still try the live résumé
+        workspace and profile flow.
+      </p>
+      <div className="mt-6 flex flex-wrap justify-center gap-3">
+        <Button href="/demo/live-resume" size="md">
+          Try Live Résumé Demo
+        </Button>
+        <Button href="/jobs" variant="outline" size="md">
+          Back to Jobs
+        </Button>
+      </div>
+    </div>
   );
 }
 

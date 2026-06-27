@@ -8,6 +8,7 @@ import { JobFilters } from "@/components/jobs/JobFilters";
 import { ActiveFilters } from "@/components/jobs/ActiveFilters";
 import { Button } from "@/components/ui/Button";
 import type { Prisma } from "@/app/generated/prisma/client";
+import type { JobCardData } from "@/components/jobs/JobCard";
 
 export const metadata: Metadata = {
   title: "Browse Jobs",
@@ -44,16 +45,25 @@ export default async function JobsPage({ searchParams }: { searchParams: SearchP
     ];
   }
 
-  const [jobs, total] = await Promise.all([
-    prisma.job.findMany({
-      where,
-      orderBy: { publishedAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-      include: { company: { select: { name: true, logoUrl: true } } },
-    }),
-    prisma.job.count({ where }),
-  ]);
+  let databaseUnavailable = false;
+  let jobs: JobCardData[] = [];
+  let total = 0;
+
+  try {
+    [jobs, total] = await Promise.all([
+      prisma.job.findMany({
+        where,
+        orderBy: { publishedAt: "desc" },
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
+        include: { company: { select: { name: true, logoUrl: true } } },
+      }),
+      prisma.job.count({ where }),
+    ]);
+  } catch (error) {
+    databaseUnavailable = true;
+    console.warn("CareersRX jobs page data is unavailable.", error);
+  }
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -101,12 +111,14 @@ export default async function JobsPage({ searchParams }: { searchParams: SearchP
             </Suspense>
           </div>
 
-          {jobs.length === 0 ? (
+          {databaseUnavailable ? (
+            <DatabaseUnavailableState />
+          ) : jobs.length === 0 ? (
             <EmptyState query={sp.q} />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {jobs.map((job) => (
-                <JobCard key={job.id} job={job} />
+                <JobCard key={job.slug} job={job} />
               ))}
             </div>
           )}
@@ -115,6 +127,29 @@ export default async function JobsPage({ searchParams }: { searchParams: SearchP
             <Pagination page={page} totalPages={totalPages} sp={sp} />
           ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DatabaseUnavailableState() {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-surface p-10 text-center">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-light text-primary">
+        <SearchX size={28} />
+      </div>
+      <h2 className="mt-4 text-lg font-semibold text-foreground">Job listings are being prepared</h2>
+      <p className="mx-auto mt-1 max-w-xl text-muted">
+        CareersRX is online, but the production jobs database is not connected yet. You can still try the live résumé
+        workspace and profile flow.
+      </p>
+      <div className="mt-5 flex flex-wrap justify-center gap-3">
+        <Button href="/demo/live-resume" size="sm">
+          Try Live Résumé Demo
+        </Button>
+        <Button href="/register/seeker" variant="outline" size="sm">
+          Create Profile
+        </Button>
       </div>
     </div>
   );

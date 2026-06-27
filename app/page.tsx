@@ -5,20 +5,31 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/Button";
 import { JobCard } from "@/components/jobs/JobCard";
 import { JOB_CATEGORIES, FOCUS_STATES } from "@/lib/constants";
+import type { JobCardData } from "@/components/jobs/JobCard";
 
 export default async function HomePage() {
   await connection();
 
-  const [featuredJobs, jobCount, companyCount] = await Promise.all([
-    prisma.job.findMany({
-      where: { status: "ACTIVE" },
-      orderBy: { publishedAt: "desc" },
-      take: 6,
-      include: { company: { select: { name: true, logoUrl: true } } },
-    }),
-    prisma.job.count({ where: { status: "ACTIVE" } }),
-    prisma.company.count({ where: { verificationStatus: "APPROVED" } }),
-  ]);
+  let databaseUnavailable = false;
+  let featuredJobs: JobCardData[] = [];
+  let jobCount = 0;
+  let companyCount = 0;
+
+  try {
+    [featuredJobs, jobCount, companyCount] = await Promise.all([
+      prisma.job.findMany({
+        where: { status: "ACTIVE" },
+        orderBy: { publishedAt: "desc" },
+        take: 6,
+        include: { company: { select: { name: true, logoUrl: true } } },
+      }),
+      prisma.job.count({ where: { status: "ACTIVE" } }),
+      prisma.company.count({ where: { verificationStatus: "APPROVED" } }),
+    ]);
+  } catch (error) {
+    databaseUnavailable = true;
+    console.warn("CareersRX public job data is unavailable.", error);
+  }
 
   return (
     <>
@@ -109,11 +120,27 @@ export default async function HomePage() {
           </Button>
         </div>
 
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {featuredJobs.map((job) => (
-            <JobCard key={job.id} job={job} />
-          ))}
-        </div>
+        {databaseUnavailable ? (
+          <div className="mt-8 rounded-2xl border border-border bg-surface p-6">
+            <h3 className="text-lg font-semibold text-foreground">Live job listings are being prepared.</h3>
+            <p className="mt-2 max-w-2xl text-muted">
+              The CareersRX résumé sandbox is available now. Job listings will appear here once the production
+              database is connected.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button href="/demo/live-resume">Try the Live Résumé Demo</Button>
+              <Button href="/register/seeker" variant="outline">
+                Create a Profile
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {featuredJobs.map((job) => (
+              <JobCard key={job.slug} job={job} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* ── How it works ── */}
