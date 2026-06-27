@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { Globe, Phone, Mail } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
@@ -6,6 +7,8 @@ import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 
 export default async function AdminEmployers() {
+  await connection();
+
   const companies = await prisma.company.findMany({
     orderBy: [{ verificationStatus: "asc" }, { createdAt: "desc" }],
     include: { _count: { select: { jobs: true, users: true } } },

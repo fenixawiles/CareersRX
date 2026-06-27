@@ -1,8 +1,11 @@
+import { connection } from "next/server";
 import { ScrollText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, EmptyState } from "@/components/dashboard/DashboardUI";
 
 export default async function AdminAudit() {
+  await connection();
+
   const logs = await prisma.auditLog.findMany({
     orderBy: { createdAt: "desc" },
     take: 50,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { Search, Heart, ShieldCheck, Users, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/Button";
@@ -6,6 +7,8 @@ import { JobCard } from "@/components/jobs/JobCard";
 import { JOB_CATEGORIES, FOCUS_STATES } from "@/lib/constants";
 
 export default async function HomePage() {
+  await connection();
+
   const [featuredJobs, jobCount, companyCount] = await Promise.all([
     prisma.job.findMany({
       where: { status: "ACTIVE" },

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { FileText, MapPin } from "lucide-react";
 import { getDemoSeeker } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
@@ -8,6 +9,8 @@ import { Button } from "@/components/ui/Button";
 import { postedAgo } from "@/lib/utils";
 
 export default async function SeekerApplications() {
+  await connection();
+
   const seeker = await getDemoSeeker();
   if (!seeker) return null;
 

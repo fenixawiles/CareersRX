@@ -1,8 +1,11 @@
+import { connection } from "next/server";
 import { Mail } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, EmptyState } from "@/components/dashboard/DashboardUI";
 
 export default async function AdminContact() {
+  await connection();
+
   const submissions = await prisma.contactSubmission.findMany({
     orderBy: { createdAt: "desc" },
   });

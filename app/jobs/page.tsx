@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { Search, SearchX } from "lucide-react";
 import { prisma } from "@/lib/prisma";
@@ -25,6 +26,8 @@ type SearchParams = Promise<{
 }>;
 
 export default async function JobsPage({ searchParams }: { searchParams: SearchParams }) {
+  await connection();
+
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
 

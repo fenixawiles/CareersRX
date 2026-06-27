@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { Building2, Briefcase, Flag, Users, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, StatCard, Card } from "@/components/dashboard/DashboardUI";
@@ -6,6 +7,8 @@ import { DemoBanner } from "@/components/dashboard/DemoBanner";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 
 export default async function AdminOverview() {
+  await connection();
+
   const [pendingEmployers, pendingJobs, openReports, totalUsers, recentCompanies] =
     await Promise.all([
       prisma.company.count({ where: { verificationStatus: "PENDING" } }),

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { Briefcase, Users, Eye, ArrowRight, BadgeCheck } from "lucide-react";
 import { getDemoCompany } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
@@ -8,6 +9,8 @@ import { JobStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 
 export default async function EmployerOverview() {
+  await connection();
+
   const company = await getDemoCompany();
   if (!company) return null;
 

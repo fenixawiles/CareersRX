@@ -1,8 +1,11 @@
+import { connection } from "next/server";
 import { Flag } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, EmptyState } from "@/components/dashboard/DashboardUI";
 
 export default async function AdminReports() {
+  await connection();
+
   const reports = await prisma.jobReport.findMany({
     where: { resolved: false },
     orderBy: { createdAt: "desc" },

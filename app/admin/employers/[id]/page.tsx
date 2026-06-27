@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { ArrowLeft, MapPin, Check, X } from "lucide-react";
 import { prisma } from "@/lib/prisma";
@@ -17,6 +18,8 @@ const CHECKLIST = [
 ];
 
 export default async function AdminEmployerDetail({ params }: { params: Params }) {
+  await connection();
+
   const { id } = await params;
   const company = await prisma.company.findUnique({
     where: { id },

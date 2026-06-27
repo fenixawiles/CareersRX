@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { getDemoCompany } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
@@ -11,6 +12,8 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 export default async function TeamPage() {
+  await connection();
+
   const company = await getDemoCompany();
   if (!company) return null;
 

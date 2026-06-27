@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Users, FileText, Mail } from "lucide-react";
 import { getDemoCompany } from "@/lib/demo";
@@ -11,6 +12,8 @@ import { postedAgo } from "@/lib/utils";
 type Params = Promise<{ id: string }>;
 
 export default async function ApplicantsPage({ params }: { params: Params }) {
+  await connection();
+
   const { id } = await params;
   const company = await getDemoCompany();
   if (!company) return null;

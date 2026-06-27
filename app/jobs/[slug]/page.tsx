@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -51,6 +52,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 }
 
 export default async function JobDetailPage({ params }: { params: Params }) {
+  await connection();
+
   const { slug } = await params;
   const job = await getJob(slug);
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { MapPin } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
@@ -6,6 +7,8 @@ import { JobStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 
 export default async function AdminJobs() {
+  await connection();
+
   const jobs = await prisma.job.findMany({
     orderBy: { publishedAt: "desc" },
     take: 40,

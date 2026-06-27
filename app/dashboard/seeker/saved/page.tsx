@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { Bookmark } from "lucide-react";
 import { getDemoSeeker } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
@@ -6,6 +7,8 @@ import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/Button";
 
 export default async function SeekerSaved() {
+  await connection();
+
   const seeker = await getDemoSeeker();
   if (!seeker) return null;
 

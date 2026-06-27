@@ -1,9 +1,12 @@
+import { connection } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading } from "@/components/dashboard/DashboardUI";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 
 export default async function AdminUsers() {
+  await connection();
+
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
     include: {

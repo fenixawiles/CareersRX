@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { Briefcase, Users, MapPin } from "lucide-react";
 import { getDemoCompany } from "@/lib/demo";
 import { prisma } from "@/lib/prisma";
@@ -9,6 +10,8 @@ import { JOB_TYPE_LABELS } from "@/lib/constants";
 import { formatSalaryRange } from "@/lib/utils";
 
 export default async function EmployerJobs() {
+  await connection();
+
   const company = await getDemoCompany();
   if (!company) return null;
 
