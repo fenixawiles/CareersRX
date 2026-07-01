@@ -1,11 +1,10 @@
 import "server-only";
 
-import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 
-type DatabaseSyncConstructor = new (path: string) => {
+type DatabaseConstructor = new (path: string) => {
   exec(sql: string): void;
   prepare(sql: string): {
     all(): Record<string, unknown>[];
@@ -14,16 +13,26 @@ type DatabaseSyncConstructor = new (path: string) => {
 };
 
 const require = createRequire(import.meta.url);
-let databaseSync: DatabaseSyncConstructor | null | undefined;
+let databaseConstructor: DatabaseConstructor | null | undefined;
 
-function getDatabaseSync() {
-  if (databaseSync !== undefined) return databaseSync;
+function getDatabaseConstructor() {
+  if (databaseConstructor !== undefined) return databaseConstructor;
   try {
-    databaseSync = (require("node:sqlite") as { DatabaseSync?: DatabaseSyncConstructor }).DatabaseSync ?? null;
+    databaseConstructor = (require("node:sqlite") as { DatabaseSync?: DatabaseConstructor }).DatabaseSync ?? null;
   } catch {
-    databaseSync = null;
+    databaseConstructor = null;
   }
-  return databaseSync;
+
+  if (databaseConstructor) return databaseConstructor;
+
+  try {
+    const betterSqlite = require("better-sqlite3") as DatabaseConstructor | { default?: DatabaseConstructor };
+    databaseConstructor = typeof betterSqlite === "function" ? betterSqlite : betterSqlite.default ?? null;
+  } catch {
+    databaseConstructor = null;
+  }
+
+  return databaseConstructor;
 }
 
 function ensureParentDirectory(dbPath: string) {
@@ -32,38 +41,24 @@ function ensureParentDirectory(dbPath: string) {
 
 export function runSqlFile(dbPath: string, sql: string) {
   ensureParentDirectory(dbPath);
-  const DatabaseSync = getDatabaseSync();
-  if (DatabaseSync) {
-    const database = new DatabaseSync(dbPath);
-    try {
-      database.exec(sql);
-    } finally {
-      database.close();
-    }
-    return;
+  const Database = getDatabaseConstructor();
+  if (!Database) throw new Error("No SQLite runtime is available. Install better-sqlite3.");
+  const database = new Database(dbPath);
+  try {
+    database.exec(sql);
+  } finally {
+    database.close();
   }
-
-  execFileSync("sqlite3", [dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
 }
 
 export function querySqlFile<T>(dbPath: string, sql: string): T[] {
   ensureParentDirectory(dbPath);
-  const DatabaseSync = getDatabaseSync();
-  if (DatabaseSync) {
-    const database = new DatabaseSync(dbPath);
-    try {
-      return database.prepare(sql).all() as T[];
-    } finally {
-      database.close();
-    }
+  const Database = getDatabaseConstructor();
+  if (!Database) throw new Error("No SQLite runtime is available. Install better-sqlite3.");
+  const database = new Database(dbPath);
+  try {
+    return database.prepare(sql).all() as T[];
+  } finally {
+    database.close();
   }
-
-  const output = execFileSync("sqlite3", ["-json", dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  }).trim();
-  return output ? (JSON.parse(output) as T[]) : [];
 }

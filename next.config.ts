@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import path from "node:path";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
+  serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist"],
   // Pin the workspace root so Next doesn't pick a parent-directory lockfile.
   turbopack: {
     root: path.join(__dirname),
