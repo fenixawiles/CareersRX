@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Live Résumé Sandbox",
-  description: "Test signup-generated CareersRX live résumé editing without logging in, backed by local SQLite persistence.",
+  description: "Test signup-generated CareersRX live résumé editing without logging in, backed by SQLite persistence.",
 };
 
 export default function LiveResumeSandboxPage() {

@@ -210,7 +210,7 @@ export function SeekerAccountSignupForm() {
         <div>
           <h2 className="font-semibold text-foreground">Create your CareersRX account</h2>
           <p className="mt-1 text-sm text-muted">
-            This creates a real local SQLite account, logs you in, builds your public
+            This creates a real SQLite-backed account, logs you in, builds your public
             profile, and generates your first live résumé.
           </p>
         </div>
@@ -331,7 +331,7 @@ export function SeekerAccountSignupForm() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted">
-          {status || "Your account, session, profile, and live résumé persist in local SQLite."}
+          {status || "Your account, session, profile, and live résumé persist in SQLite."}
         </p>
         <Button
           type="submit"
