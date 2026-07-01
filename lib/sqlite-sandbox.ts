@@ -1,9 +1,8 @@
 import "server-only";
 
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import type {
   SandboxAuditEntry,
   SandboxNamedResumeVersion,
@@ -37,20 +36,11 @@ function sqlString(value: string | null) {
 }
 
 function runSql(sql: string) {
-  mkdirSync(dbDir, { recursive: true });
-  execFileSync("sqlite3", [dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  runSqlFile(dbPath, sql);
 }
 
 function querySql<T>(sql: string): T[] {
-  mkdirSync(dbDir, { recursive: true });
-  const output = execFileSync("sqlite3", ["-json", dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  }).trim();
-  return output ? (JSON.parse(output) as T[]) : [];
+  return querySqlFile<T>(dbPath, sql);
 }
 
 function initializeDatabase() {

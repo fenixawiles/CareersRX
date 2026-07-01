@@ -1,11 +1,10 @@
 import "server-only";
 
-import { execFileSync } from "node:child_process";
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { cookies } from "next/headers";
 import { createSandboxProfile } from "@/lib/sqlite-sandbox";
+import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import type { SandboxSignupInput } from "@/lib/sandbox-types";
 
 export const LOCAL_SESSION_COOKIE = "careeros_local_session";
@@ -36,20 +35,11 @@ function sqlString(value: string | null) {
 }
 
 function runSql(sql: string) {
-  mkdirSync(dbDir, { recursive: true });
-  execFileSync("sqlite3", [dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  runSqlFile(dbPath, sql);
 }
 
 function querySql<T>(sql: string): T[] {
-  mkdirSync(dbDir, { recursive: true });
-  const output = execFileSync("sqlite3", ["-json", dbPath, sql], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  }).trim();
-  return output ? (JSON.parse(output) as T[]) : [];
+  return querySqlFile<T>(dbPath, sql);
 }
 
 function initializeLocalAuth() {
