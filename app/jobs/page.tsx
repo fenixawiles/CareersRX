@@ -2,13 +2,11 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Search, SearchX } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { listPublicJobs } from "@/lib/local-platform";
 import { JobCard } from "@/components/jobs/JobCard";
 import { JobFilters } from "@/components/jobs/JobFilters";
 import { ActiveFilters } from "@/components/jobs/ActiveFilters";
 import { Button } from "@/components/ui/Button";
-import type { Prisma } from "@/app/generated/prisma/client";
-import type { JobCardData } from "@/components/jobs/JobCard";
 
 export const metadata: Metadata = {
   title: "Browse Jobs",
@@ -28,42 +26,17 @@ type SearchParams = Promise<{
 
 export default async function JobsPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
-
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
 
-  const where: Prisma.JobWhereInput = { status: "ACTIVE" };
-  if (sp.state) where.state = sp.state;
-  if (sp.category) where.category = sp.category;
-  if (sp.jobType) where.jobType = sp.jobType as Prisma.JobWhereInput["jobType"];
-  if (sp.q) {
-    where.OR = [
-      { title: { contains: sp.q, mode: "insensitive" } },
-      { description: { contains: sp.q, mode: "insensitive" } },
-      { city: { contains: sp.q, mode: "insensitive" } },
-      { company: { is: { name: { contains: sp.q, mode: "insensitive" } } } },
-    ];
-  }
-
-  let databaseUnavailable = false;
-  let jobs: JobCardData[] = [];
-  let total = 0;
-
-  try {
-    [jobs, total] = await Promise.all([
-      prisma.job.findMany({
-        where,
-        orderBy: { publishedAt: "desc" },
-        skip: (page - 1) * PAGE_SIZE,
-        take: PAGE_SIZE,
-        include: { company: { select: { name: true, logoUrl: true } } },
-      }),
-      prisma.job.count({ where }),
-    ]);
-  } catch (error) {
-    databaseUnavailable = true;
-    console.warn("CareersRX jobs page data is unavailable.", error);
-  }
+  const { jobs, total } = listPublicJobs({
+    q: sp.q,
+    category: sp.category,
+    state: sp.state,
+    jobType: sp.jobType,
+    page,
+    pageSize: PAGE_SIZE,
+  });
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -111,9 +84,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SearchP
             </Suspense>
           </div>
 
-          {databaseUnavailable ? (
-            <DatabaseUnavailableState />
-          ) : jobs.length === 0 ? (
+          {jobs.length === 0 ? (
             <EmptyState query={sp.q} />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
@@ -132,29 +103,6 @@ export default async function JobsPage({ searchParams }: { searchParams: SearchP
   );
 }
 
-function DatabaseUnavailableState() {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-surface p-10 text-center">
-      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-light text-primary">
-        <SearchX size={28} />
-      </div>
-      <h2 className="mt-4 text-lg font-semibold text-foreground">Job listings are being prepared</h2>
-      <p className="mx-auto mt-1 max-w-xl text-muted">
-        CareersRX is online, but the production jobs database is not connected yet. You can still try the live résumé
-        workspace and profile flow.
-      </p>
-      <div className="mt-5 flex flex-wrap justify-center gap-3">
-        <Button href="/demo/live-resume" size="sm">
-          Try Live Résumé Demo
-        </Button>
-        <Button href="/register/seeker" variant="outline" size="sm">
-          Create Profile
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function EmptyState({ query }: { query?: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-border bg-surface p-10 text-center">
@@ -165,11 +113,14 @@ function EmptyState({ query }: { query?: string }) {
         No jobs found{query ? ` for “${query}”` : ""}
       </h2>
       <p className="mt-1 text-muted">
-        Try removing some filters or broadening your search.
+        Try removing filters, broadening your search, or check back as employers publish new roles.
       </p>
-      <div className="mt-5">
+      <div className="mt-5 flex flex-wrap justify-center gap-3">
         <Button href="/jobs" variant="outline" size="sm">
           Clear search & filters
+        </Button>
+        <Button href="/register/seeker" size="sm">
+          Create Profile
         </Button>
       </div>
     </div>

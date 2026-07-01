@@ -19,6 +19,7 @@ function isResumeSectionId(value: unknown): value is SandboxResumeSection["id"] 
 export async function POST(request: Request) {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
+  if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
 
   const body = (await request.json().catch(() => null)) as { sectionId?: unknown } | null;
   return NextResponse.json(

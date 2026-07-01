@@ -1,28 +1,54 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { X, Check, Upload, FileText, Heart } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 type Props = {
+  jobId: string;
   jobTitle: string;
   companyName: string;
+  initiallySaved?: boolean;
+  canApply?: boolean;
 };
 
-export function ApplyButton({ jobTitle, companyName }: Props) {
+export function ApplyButton({ jobId, jobTitle, companyName, initiallySaved = false, canApply = false }: Props) {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(initiallySaved);
+  const [saving, setSaving] = useState(false);
+
+  function loginHref() {
+    return `/login?next=${encodeURIComponent(pathname)}`;
+  }
+
+  async function toggleSaved() {
+    if (!canApply) {
+      window.location.href = loginHref();
+      return;
+    }
+    setSaving(true);
+    const response = await fetch("/api/account/saved-jobs", {
+      method: saved ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId }),
+    });
+    setSaving(false);
+    if (response.ok) setSaved((current) => !current);
+  }
 
   return (
     <>
       <div className="flex flex-col gap-2">
-        <Button size="md" onClick={() => setOpen(true)}>
+        <Button size="md" onClick={() => (canApply ? setOpen(true) : (window.location.href = loginHref()))}>
           Apply Now
         </Button>
         <Button
           variant={saved ? "secondary" : "outline"}
           size="md"
-          onClick={() => setSaved((s) => !s)}
+          onClick={toggleSaved}
+          disabled={saving}
         >
           <Heart size={16} className={saved ? "fill-current" : ""} />
           {saved ? "Saved" : "Save Job"}
@@ -31,6 +57,7 @@ export function ApplyButton({ jobTitle, companyName }: Props) {
 
       {open ? (
         <ApplyModal
+          jobId={jobId}
           jobTitle={jobTitle}
           companyName={companyName}
           onClose={() => setOpen(false)}
@@ -40,8 +67,11 @@ export function ApplyButton({ jobTitle, companyName }: Props) {
   );
 }
 
-function ApplyModal({ jobTitle, companyName, onClose }: Props & { onClose: () => void }) {
+function ApplyModal({ jobId, jobTitle, companyName, onClose }: Props & { onClose: () => void }) {
   const [submitted, setSubmitted] = useState(false);
+  const [status, setStatus] = useState("");
+  const [coverLetter, setCoverLetter] = useState("");
+  const [licenseConfirmed, setLicenseConfirmed] = useState(true);
 
   // Lock scroll + close on Escape (accessible modal behavior)
   useEffect(() => {
@@ -82,9 +112,6 @@ function ApplyModal({ jobTitle, companyName, onClose }: Props & { onClose: () =>
               Your application for <span className="font-medium text-foreground">{jobTitle}</span>{" "}
               at {companyName} has been sent. You can track its status in your dashboard.
             </p>
-            <p className="mt-1 text-sm text-muted">
-              (In the demo, applications aren’t saved — this shows the real flow.)
-            </p>
             <div className="mt-6 flex justify-center gap-2">
               <Button href="/dashboard/seeker/applications" size="sm">
                 View Applications
@@ -103,7 +130,19 @@ function ApplyModal({ jobTitle, companyName, onClose }: Props & { onClose: () =>
               className="mt-5 space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                setSubmitted(true);
+                setStatus("Submitting application…");
+                fetch("/api/account/applications", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ jobId, coverLetter, licenseConfirmed }),
+                }).then(async (response) => {
+                  if (!response.ok) {
+                    const data = (await response.json().catch(() => null)) as { error?: string } | null;
+                    setStatus(data?.error ?? "Could not submit application.");
+                    return;
+                  }
+                  setSubmitted(true);
+                });
               }}
             >
               {/* Resume */}
@@ -111,13 +150,16 @@ function ApplyModal({ jobTitle, companyName, onClose }: Props & { onClose: () =>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">Resume</label>
                 <div className="flex items-center justify-between rounded-xl border border-dashed border-border bg-background px-3 py-3 text-sm">
                   <span className="inline-flex items-center gap-2 text-muted">
-                    <FileText size={16} /> No resume on file
+                    <FileText size={16} /> Your current profile and live résumé snapshot
                   </span>
                   <button
                     type="button"
                     className="inline-flex items-center gap-1.5 font-medium text-primary"
+                    onClick={() => {
+                      window.location.href = "/dashboard/seeker/resume";
+                    }}
                   >
-                    <Upload size={15} /> Upload
+                    <Upload size={15} /> Review
                   </button>
                 </div>
               </div>
@@ -129,10 +171,22 @@ function ApplyModal({ jobTitle, companyName, onClose }: Props & { onClose: () =>
                 </label>
                 <div className="flex gap-2">
                   <label className="flex items-center gap-1.5 text-sm">
-                    <input type="radio" name="license" defaultChecked /> Yes
+                    <input
+                      type="radio"
+                      name="license"
+                      checked={licenseConfirmed}
+                      onChange={() => setLicenseConfirmed(true)}
+                    />{" "}
+                    Yes
                   </label>
                   <label className="flex items-center gap-1.5 text-sm">
-                    <input type="radio" name="license" /> No
+                    <input
+                      type="radio"
+                      name="license"
+                      checked={!licenseConfirmed}
+                      onChange={() => setLicenseConfirmed(false)}
+                    />{" "}
+                    No
                   </label>
                 </div>
               </div>
@@ -148,11 +202,14 @@ function ApplyModal({ jobTitle, companyName, onClose }: Props & { onClose: () =>
                 <textarea
                   id="coverLetter"
                   rows={4}
+                  value={coverLetter}
+                  onChange={(event) => setCoverLetter(event.target.value)}
                   placeholder="Tell the employer why you're a great fit…"
                   className="w-full rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus-visible:border-primary"
                 />
               </div>
 
+              <p className="min-h-5 text-sm text-muted">{status}</p>
               <Button type="submit" size="md" className="w-full">
                 Submit Application
               </Button>

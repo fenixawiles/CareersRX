@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronLeft, ChevronRight, MapPin, DollarSign, Clock } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, MapPin, DollarSign, Clock, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import {
@@ -55,6 +55,8 @@ export function PostJobWizard() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(initial);
   const [submitted, setSubmitted] = useState(false);
+  const [status, setStatus] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -69,19 +71,34 @@ export function PostJobWizard() {
     }));
   }
 
+  async function submitJob() {
+    setSubmitting(true);
+    setStatus("Saving job posting…");
+    const response = await fetch("/api/employer/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+    setSubmitting(false);
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+      setStatus(data?.error ?? "Could not save job posting.");
+      return;
+    }
+    setStatus("");
+    setSubmitted(true);
+  }
+
   if (submitted) {
     return (
       <div className="rounded-2xl border border-border bg-surface p-10 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#e3f0e9] text-success">
           <Check size={28} />
         </div>
-        <h2 className="mt-4 text-xl font-bold text-foreground">Job submitted for review</h2>
+        <h2 className="mt-4 text-xl font-bold text-foreground">Job saved as a draft</h2>
         <p className="mx-auto mt-2 max-w-md text-muted">
-          Your posting <span className="font-medium text-foreground">“{form.title}”</span> has
-          been sent to our team for moderation. Once approved, it will go live on CareersRX.
-        </p>
-        <p className="mt-1 text-sm text-muted">
-          (In the demo, postings aren’t saved — this shows the real submission flow.)
+          Your posting <span className="font-medium text-foreground">“{form.title}”</span> has been
+          saved to your employer dashboard. Publish it when you are ready for candidates to see it.
         </p>
         <div className="mt-6 flex justify-center gap-2">
           <Button href="/dashboard/employer/jobs" variant="outline" size="sm">
@@ -358,11 +375,13 @@ export function PostJobWizard() {
             Next <ChevronRight size={18} />
           </Button>
         ) : (
-          <Button size="md" onClick={() => setSubmitted(true)}>
-            Submit for Review
+          <Button size="md" onClick={submitJob} disabled={submitting}>
+            {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
+            Save Posting
           </Button>
         )}
       </div>
+      <p className="mt-3 min-h-5 text-right text-sm text-muted">{status}</p>
 
       <style>{`
         .input {

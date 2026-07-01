@@ -1,41 +1,49 @@
+import { redirect } from "next/navigation";
+import { LogoutButton } from "@/components/auth/LogoutButton";
 import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
 import { Button } from "@/components/ui/Button";
+import { getCurrentLocalUser } from "@/lib/local-auth";
+import { getCompanyForUser } from "@/lib/local-platform";
 
-export default function EmployerAccountPage() {
+export default async function EmployerAccountPage() {
+  const user = await getCurrentLocalUser();
+  if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/account");
+  const company = getCompanyForUser(user.id);
+
   return (
     <div className="space-y-6">
-      <DashboardHeading title="Account settings" />
+      <DashboardHeading title="Account settings" action={<LogoutButton />} />
 
       <Card>
-        <h2 className="font-semibold text-foreground">Password</h2>
-        <p className="mt-1 text-sm text-muted">Update your password to keep your account secure.</p>
+        <h2 className="font-semibold text-foreground">Account</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <Info label="Name" value={user.fullName} />
+          <Info label="Email" value={user.email} />
+          <Info label="Role" value="Employer owner" />
+          <Info label="Company" value={company?.name ?? "Company profile needed"} />
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="font-semibold text-foreground">Hiring notifications</h2>
+        <p className="mt-1 text-sm text-muted">
+          Email notifications are not enabled yet. Applicant activity stays visible in your dashboard.
+        </p>
         <div className="mt-3">
-          <Button variant="outline" size="sm">
-            Change Password
+          <Button href="/dashboard/employer/jobs" variant="outline" size="sm">
+            Review Jobs
           </Button>
         </div>
       </Card>
+    </div>
+  );
+}
 
-      <Card>
-        <h2 className="font-semibold text-foreground">Notifications</h2>
-        <p className="mt-1 text-sm text-muted">
-          Choose which applicant status changes notify candidates by email.
-        </p>
-        <div className="mt-3 space-y-2 text-sm">
-          {[
-            ["Phone screen", true],
-            ["Interview", true],
-            ["Offer", true],
-            ["Not selected", true],
-            ["Reviewed", false],
-          ].map(([label, on]) => (
-            <label key={label as string} className="flex items-center gap-2">
-              <input type="checkbox" defaultChecked={on as boolean} />
-              {label}
-            </label>
-          ))}
-        </div>
-      </Card>
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-background p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</p>
+      <p className="mt-1 text-sm text-foreground">{value}</p>
     </div>
   );
 }

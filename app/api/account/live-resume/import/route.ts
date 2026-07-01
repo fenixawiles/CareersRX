@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
+  if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
 
   const formData = await request.formData().catch(() => null);
   const file = formData?.get("file");

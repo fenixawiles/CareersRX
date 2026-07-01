@@ -3,7 +3,6 @@ import { connection } from "next/server";
 import { Building2, Briefcase, Flag, Users, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, StatCard, Card } from "@/components/dashboard/DashboardUI";
-import { DemoBanner } from "@/components/dashboard/DemoBanner";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 
 export default async function AdminOverview() {
@@ -25,8 +24,6 @@ export default async function AdminOverview() {
   return (
     <div className="space-y-6">
       <DashboardHeading title="Admin dashboard" description="Platform health at a glance." />
-
-      <DemoBanner role="admin" />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Pending employers" value={pendingEmployers} icon={Building2} />

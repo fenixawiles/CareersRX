@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { DashboardHeading } from "@/components/dashboard/DashboardUI";
-import { LiveResumeSandbox } from "@/components/demo/LiveResumeSandbox";
+import { LiveResumeWorkspace } from "@/components/live-resume/LiveResumeWorkspace";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
 import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
 
@@ -14,13 +14,12 @@ export default async function SeekerResumePage() {
         title="Live Résumé"
         description="Edit résumé sections, save them, then choose whether each change updates your public profile."
       />
-      <LiveResumeSandbox
+      <LiveResumeWorkspace
         initialSnapshot={getSandboxSnapshot(sandboxIdForUser(user.id))}
         apiBase="/api/account/live-resume"
         profileHref="/dashboard/seeker/profile"
         setupHref="/dashboard/seeker/account"
         setupLabel="Account Settings"
-        mode="account"
       />
     </div>
   );

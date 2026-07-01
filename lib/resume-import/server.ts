@@ -18,7 +18,7 @@ import {
   writeSandboxAiInteraction,
 } from "@/lib/sqlite-sandbox";
 
-type ImportMode = "account" | "demo" | "signup";
+type ImportMode = "account" | "signup";
 
 function uniqueListText(value: string, separator: "\n" | " · ") {
   const seen = new Set<string>();

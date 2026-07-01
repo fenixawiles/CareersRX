@@ -6,13 +6,15 @@ import type { SandboxResumeSection } from "@/lib/sandbox-types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function getSandboxId() {
+async function getSeekerSandboxId() {
   const user = await getCurrentLocalUser();
-  return user ? sandboxIdForUser(user.id) : null;
+  if (!user) return { error: "Log in required", status: 401 as const };
+  if (user.role !== "SEEKER") return { error: "Job seeker account required", status: 403 as const };
+  return { sandboxId: sandboxIdForUser(user.id) };
 }
 
-function unauthorized() {
-  return NextResponse.json({ error: "Log in required" }, { status: 401 });
+function authError(auth: { error: string; status: 401 | 403 }) {
+  return NextResponse.json({ error: auth.error }, { status: auth.status });
 }
 
 function isResumeSectionId(value: unknown): value is SandboxResumeSection["id"] {
@@ -26,14 +28,14 @@ function isResumeSectionId(value: unknown): value is SandboxResumeSection["id"] 
 }
 
 export async function GET() {
-  const sandboxId = await getSandboxId();
-  if (!sandboxId) return unauthorized();
-  return NextResponse.json(getSandboxSnapshot(sandboxId));
+  const auth = await getSeekerSandboxId();
+  if (!("sandboxId" in auth)) return authError(auth);
+  return NextResponse.json(getSandboxSnapshot(auth.sandboxId));
 }
 
 export async function PATCH(request: Request) {
-  const sandboxId = await getSandboxId();
-  if (!sandboxId) return unauthorized();
+  const auth = await getSeekerSandboxId();
+  if (!("sandboxId" in auth)) return authError(auth);
 
   const body = (await request.json().catch(() => null)) as {
     sections?: unknown;
@@ -64,14 +66,14 @@ export async function PATCH(request: Request) {
       typeof body.targetRole === "string" ? body.targetRole : "",
       typeof body.title === "string" ? body.title : undefined,
       isResumeSectionId(body.sectionId) ? body.sectionId : undefined,
-      sandboxId,
+      auth.sandboxId,
       typeof body.namedVersionId === "string" ? body.namedVersionId : undefined,
     ),
   );
 }
 
 export async function DELETE() {
-  const sandboxId = await getSandboxId();
-  if (!sandboxId) return unauthorized();
-  return NextResponse.json(resetSandbox(sandboxId));
+  const auth = await getSeekerSandboxId();
+  if (!("sandboxId" in auth)) return authError(auth);
+  return NextResponse.json(resetSandbox(auth.sandboxId));
 }

@@ -1,35 +1,15 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { Search, Heart, ShieldCheck, Users, ArrowRight } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { getPublicJobStats, listPublicJobs } from "@/lib/local-platform";
 import { Button } from "@/components/ui/Button";
 import { JobCard } from "@/components/jobs/JobCard";
 import { JOB_CATEGORIES, FOCUS_STATES } from "@/lib/constants";
-import type { JobCardData } from "@/components/jobs/JobCard";
 
 export default async function HomePage() {
   await connection();
-
-  let databaseUnavailable = false;
-  let featuredJobs: JobCardData[] = [];
-  let jobCount = 0;
-  let companyCount = 0;
-
-  try {
-    [featuredJobs, jobCount, companyCount] = await Promise.all([
-      prisma.job.findMany({
-        where: { status: "ACTIVE" },
-        orderBy: { publishedAt: "desc" },
-        take: 6,
-        include: { company: { select: { name: true, logoUrl: true } } },
-      }),
-      prisma.job.count({ where: { status: "ACTIVE" } }),
-      prisma.company.count({ where: { verificationStatus: "APPROVED" } }),
-    ]);
-  } catch (error) {
-    databaseUnavailable = true;
-    console.warn("CareersRX public job data is unavailable.", error);
-  }
+  const { jobs: featuredJobs } = listPublicJobs({ page: 1, pageSize: 6 });
+  const { jobCount, companyCount } = getPublicJobStats();
 
   return (
     <>
@@ -50,8 +30,8 @@ export default async function HomePage() {
               <Button href="/register/seeker" size="lg">
                 Create Account + Live Résumé
               </Button>
-              <Button href="/demo" variant="outline" size="lg">
-                Try the Sandbox
+              <Button href="/register/employer" variant="outline" size="lg">
+                Post a Job
               </Button>
             </div>
 
@@ -120,17 +100,17 @@ export default async function HomePage() {
           </Button>
         </div>
 
-        {databaseUnavailable ? (
+        {featuredJobs.length === 0 ? (
           <div className="mt-8 rounded-2xl border border-border bg-surface p-6">
-            <h3 className="text-lg font-semibold text-foreground">Live job listings are being prepared.</h3>
+            <h3 className="text-lg font-semibold text-foreground">The first CareersRX postings are coming together.</h3>
             <p className="mt-2 max-w-2xl text-muted">
-              The CareersRX résumé sandbox is available now. Job listings will appear here once the production
-              database is connected.
+              Employers can create an account, save a posting, and publish it when it is ready. Job seekers can
+              create a profile now and come back as new openings go live.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
-              <Button href="/demo/live-resume">Try the Live Résumé Demo</Button>
-              <Button href="/register/seeker" variant="outline">
-                Create a Profile
+              <Button href="/register/seeker">Create a Profile</Button>
+              <Button href="/register/employer" variant="outline">
+                Create Employer Account
               </Button>
             </div>
           </div>
@@ -158,8 +138,8 @@ export default async function HomePage() {
               },
               {
                 icon: ShieldCheck,
-                title: "Verified employers",
-                body: "We review every hiring community before their jobs go live, so you can apply with confidence.",
+                title: "Employer-owned postings",
+                body: "Employers manage their own company workspace and choose when a saved posting is ready to publish.",
               },
               {
                 icon: Users,

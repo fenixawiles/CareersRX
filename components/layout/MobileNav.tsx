@@ -2,9 +2,16 @@
 
 import { useState } from "react";
 import { Menu, X } from "lucide-react";
+import { LogoutButton } from "@/components/auth/LogoutButton";
 import { Button } from "@/components/ui/Button";
 
-export function MobileNav({ links }: { links: { href: string; label: string }[] }) {
+export function MobileNav({
+  links,
+  dashboardPath,
+}: {
+  links: { href: string; label: string }[];
+  dashboardPath: string | null;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -33,15 +40,23 @@ export function MobileNav({ links }: { links: { href: string; label: string }[] 
               </a>
             ))}
             <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3">
-              <Button href="/register/seeker" variant="primary" size="md">
-                Create Account
-              </Button>
-              <Button href="/login" variant="outline" size="md">
-                Log in
-              </Button>
-              <Button href="/register" variant="primary" size="md">
-                Sign up
-              </Button>
+              {dashboardPath ? (
+                <>
+                  <Button href={dashboardPath} variant="primary" size="md">
+                    Dashboard
+                  </Button>
+                  <LogoutButton />
+                </>
+              ) : (
+                <>
+                  <Button href="/login" variant="outline" size="md">
+                    Log in
+                  </Button>
+                  <Button href="/register" variant="primary" size="md">
+                    Sign up
+                  </Button>
+                </>
+              )}
             </div>
           </nav>
         </div>

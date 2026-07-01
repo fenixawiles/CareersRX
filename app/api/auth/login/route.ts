@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { authenticateLocalUser, createLocalSession, sessionCookieOptions } from "@/lib/local-auth";
+import {
+  authenticateLocalUser,
+  createLocalSession,
+  dashboardPathForUser,
+  sessionCookieOptions,
+} from "@/lib/local-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +25,7 @@ export async function POST(request: Request) {
   }
 
   const session = createLocalSession(user.id);
-  const response = NextResponse.json({ user });
+  const response = NextResponse.json({ user, dashboardPath: dashboardPathForUser(user) });
   response.cookies.set({
     ...sessionCookieOptions(session.expiresAt),
     value: session.token,

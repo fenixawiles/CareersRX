@@ -17,7 +17,7 @@ export default async function SeekerOverview() {
     <div className="space-y-6">
       <DashboardHeading
         title={`Welcome back, ${user.firstName}`}
-        description="Your local CareersRX account is backed by SQLite on this machine."
+        description="Your CareersRX profile, live résumé, and applications are connected in one workspace."
         action={
           <Button href="/dashboard/seeker/resume" size="sm">
             <FilePenLine size={16} /> Open Live Résumé

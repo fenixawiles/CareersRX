@@ -3,11 +3,13 @@ import "server-only";
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import path from "node:path";
 import { cookies } from "next/headers";
+import { createLocalCompanyForOwner } from "@/lib/local-platform";
 import { createSandboxProfile } from "@/lib/sqlite-sandbox";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import type { SandboxSignupInput } from "@/lib/sandbox-types";
 
 export const LOCAL_SESSION_COOKIE = "careeros_local_session";
+export type LocalUserRole = "SEEKER" | "EMPLOYER";
 
 const dbDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dbDir, "careersrx-live-resume-sandbox.sqlite");
@@ -19,7 +21,7 @@ export type LocalUser = {
   firstName: string;
   lastName: string;
   fullName: string;
-  role: "SEEKER";
+  role: LocalUserRole;
   createdAt: string;
 };
 
@@ -27,6 +29,13 @@ export type LocalSignupInput = SandboxSignupInput & {
   password: string;
   firstName?: string;
   lastName?: string;
+};
+
+export type LocalEmployerSignupInput = {
+  companyName: string;
+  contactName: string;
+  email: string;
+  password: string;
 };
 
 function sqlString(value: string | null) {
@@ -96,13 +105,14 @@ function verifyPassword(password: string, storedHash: string) {
 }
 
 function mapUser(row: Record<string, unknown>): LocalUser {
+  const role = row.role === "EMPLOYER" ? "EMPLOYER" : "SEEKER";
   return {
     id: String(row.id ?? ""),
     email: String(row.email ?? ""),
     firstName: String(row.first_name ?? ""),
     lastName: String(row.last_name ?? ""),
     fullName: String(row.full_name ?? ""),
-    role: "SEEKER",
+    role,
     createdAt: String(row.created_at ?? ""),
   };
 }
@@ -125,6 +135,10 @@ function getUserById(userId: string) {
 
 export function sandboxIdForUser(userId: string) {
   return `user:${userId}`;
+}
+
+export function dashboardPathForUser(user: LocalUser) {
+  return user.role === "EMPLOYER" ? "/dashboard/employer" : "/dashboard/seeker/profile";
 }
 
 export function createLocalSession(userId: string) {
@@ -199,6 +213,54 @@ export function createLocalSeekerAccount(input: LocalSignupInput) {
   );
 
   return { ok: true as const, user };
+}
+
+export function createLocalEmployerAccount(input: LocalEmployerSignupInput) {
+  initializeLocalAuth();
+  const email = normalizeEmail(input.email);
+  const companyName = input.companyName.trim();
+  const contactName = input.contactName.trim();
+  if (!email) return { ok: false as const, error: "Email is required" };
+  if (!companyName) return { ok: false as const, error: "Company name is required" };
+  if (!contactName) return { ok: false as const, error: "Contact name is required" };
+  if (input.password.trim().length < 8) {
+    return { ok: false as const, error: "Password must be at least 8 characters" };
+  }
+  if (getUserByEmail(email)) return { ok: false as const, error: "An account already exists for that email" };
+
+  const [firstFallback = contactName, ...lastParts] = contactName.split(" ").filter(Boolean);
+  const user: LocalUser = {
+    id: randomBytes(16).toString("hex"),
+    email,
+    firstName: firstFallback,
+    lastName: lastParts.join(" "),
+    fullName: contactName,
+    role: "EMPLOYER",
+    createdAt: now(),
+  };
+  const timestamp = now();
+  runSql(
+    `INSERT INTO local_users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at) VALUES (${[
+      sqlString(user.id),
+      sqlString(user.email),
+      sqlString(hashPassword(input.password)),
+      sqlString(user.firstName),
+      sqlString(user.lastName),
+      sqlString(user.fullName),
+      sqlString(user.role),
+      sqlString(timestamp),
+      sqlString(timestamp),
+    ].join(", ")})`,
+  );
+
+  const company = createLocalCompanyForOwner({
+    ownerUserId: user.id,
+    companyName,
+    contactName,
+    contactEmail: email,
+  });
+
+  return { ok: true as const, user, company };
 }
 
 export function authenticateLocalUser(email: string, password: string) {

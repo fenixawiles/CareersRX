@@ -23,7 +23,7 @@ export default function SeekerRegisterPage() {
             Create your job seeker account
           </h1>
           <p className="mt-2 max-w-3xl text-muted">
-            This is a real SQLite-backed signup. Your profile becomes the public-facing
+            This creates your CareersRX job seeker account. Your profile becomes the public-facing
             job board profile, and CareersRX generates a live résumé you can use to keep
             that profile current.
           </p>

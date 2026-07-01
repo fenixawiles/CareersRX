@@ -1,24 +1,17 @@
 import Link from "next/link";
-import { connection } from "next/server";
+import { redirect } from "next/navigation";
 import { FileText, MapPin } from "lucide-react";
-import { getDemoSeeker } from "@/lib/demo";
-import { prisma } from "@/lib/prisma";
+import { getCurrentLocalUser } from "@/lib/local-auth";
+import { listApplicationsForSeeker } from "@/lib/local-platform";
 import { DashboardHeading, Card, EmptyState } from "@/components/dashboard/DashboardUI";
 import { ApplicationStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { postedAgo } from "@/lib/utils";
 
 export default async function SeekerApplications() {
-  await connection();
-
-  const seeker = await getDemoSeeker();
-  if (!seeker) return null;
-
-  const applications = await prisma.application.findMany({
-    where: { seekerId: seeker.id },
-    orderBy: { createdAt: "desc" },
-    include: { job: { include: { company: { select: { name: true } } } } },
-  });
+  const user = await getCurrentLocalUser();
+  if (!user || user.role !== "SEEKER") redirect("/login?next=/dashboard/seeker/applications");
+  const applications = listApplicationsForSeeker(user.id);
 
   return (
     <div className="space-y-6">

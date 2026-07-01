@@ -123,26 +123,24 @@ const storageKey = "careersrx-rex-drawer-open";
 const messageLimit = 800;
 const importMessageLimit = 500;
 
-function assistantEndpoint(pathname: string) {
-  return pathname.startsWith("/demo") ? "/api/demo/live-resume/assistant" : "/api/account/live-resume/assistant";
+function assistantEndpoint() {
+  return "/api/account/live-resume/assistant";
 }
 
 function canApplyOnPage(pathname: string) {
-  return pathname === "/demo/live-resume" || pathname === "/dashboard/seeker/resume";
+  return pathname === "/dashboard/seeker/resume";
 }
 
-function liveResumeHref(pathname: string) {
-  return pathname.startsWith("/demo") ? "/demo/live-resume" : "/dashboard/seeker/resume";
+function liveResumeHref() {
+  return "/dashboard/seeker/resume";
 }
 
-function importApplyEndpoint(pathname: string, importId: string) {
-  const base = pathname.startsWith("/demo") ? "/api/demo/live-resume/import" : "/api/account/live-resume/import";
-  return `${base}/${importId}/apply`;
+function importApplyEndpoint(importId: string) {
+  return `/api/account/live-resume/import/${importId}/apply`;
 }
 
-function importFollowupEndpoint(pathname: string, importId: string) {
-  const base = pathname.startsWith("/demo") ? "/api/demo/live-resume/import" : "/api/account/live-resume/import";
-  return `${base}/${importId}/follow-up`;
+function importFollowupEndpoint(importId: string) {
+  return `/api/account/live-resume/import/${importId}/follow-up`;
 }
 
 function scopedIntro(pathname: string) {
@@ -287,7 +285,7 @@ export function RexAssistantDrawer() {
       chatHistory: chatHistory.slice(-6),
     };
 
-    const endpoint = assistantEndpoint(pathname);
+    const endpoint = assistantEndpoint();
     const fetchResponse = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -298,7 +296,7 @@ export function RexAssistantDrawer() {
 
     if (fetchResponse.status === 401) {
       setLoggedOut(true);
-      setStatus("Log in or use the demo to let Rex see a live résumé.");
+      setStatus("Log in to let Rex see your live résumé.");
       return;
     }
 
@@ -310,7 +308,7 @@ export function RexAssistantDrawer() {
     const nextResponse = (await fetchResponse.json()) as RexResponse;
     setResponse(nextResponse);
     setActivePanel(task === "custom_chat" ? "chat" : "result");
-    setStatus(nextResponse.demoMode ? "Rex answered with safe local guidance." : "Rex finished reviewing.");
+    setStatus("Rex finished reviewing.");
 
     if (task === "custom_chat" && options.message) {
       setChatHistory((current) =>
@@ -369,7 +367,7 @@ export function RexAssistantDrawer() {
       return;
     }
 
-    const fetchResponse = await fetch(importApplyEndpoint(pathname, importId), {
+    const fetchResponse = await fetch(importApplyEndpoint(importId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ applyMode: importReview.applyMode }),
@@ -409,7 +407,7 @@ export function RexAssistantDrawer() {
       }, 350);
       return;
     }
-    const fetchResponse = await fetch(importFollowupEndpoint(pathname, importReview.resumeImport.id), {
+    const fetchResponse = await fetch(importFollowupEndpoint(importReview.resumeImport.id), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: trimmedMessage }),
@@ -471,9 +469,9 @@ export function RexAssistantDrawer() {
           <div className="flex-1 overflow-y-auto p-3">
             {loggedOut ? (
               <div className="mb-3 rounded-2xl border border-warning/30 bg-[#f6ecd8]/60 p-3 text-sm">
-                <p className="font-semibold text-foreground">Rex needs a profile or demo résumé.</p>
+                <p className="font-semibold text-foreground">Rex needs your CareersRX account.</p>
                 <p className="mt-2 leading-6 text-muted">
-                  Log in to use your CareersRX account, or try the SQLite demo without private account data.
+                  Log in or create a job seeker account so Rex can work with your profile and live résumé.
                 </p>
                 <div className="mt-3 grid gap-2">
                   <Button href="/login" size="sm">
@@ -481,9 +479,6 @@ export function RexAssistantDrawer() {
                   </Button>
                   <Button href="/register/seeker" variant="outline" size="sm">
                     Create account
-                  </Button>
-                  <Button href="/demo/live-resume" variant="outline" size="sm">
-                    Try demo résumé
                   </Button>
                 </div>
               </div>
@@ -656,7 +651,7 @@ export function RexAssistantDrawer() {
                         {...card}
                         canApply={applyEnabled}
                         activeApplyId={activeApplyId}
-                        liveResumeHref={liveResumeHref(pathname)}
+                        liveResumeHref={liveResumeHref()}
                         onApply={applySuggestion}
                       />
                     ))}
@@ -671,7 +666,7 @@ export function RexAssistantDrawer() {
                 activeTask={activeTask}
                 applyEnabled={applyEnabled}
                 activeApplyId={activeApplyId}
-                liveResumeHref={liveResumeHref(pathname)}
+                liveResumeHref={liveResumeHref()}
                 onApply={applySuggestion}
               />
             ) : null}

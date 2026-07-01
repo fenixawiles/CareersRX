@@ -28,8 +28,9 @@ export function LoginForm() {
       return;
     }
 
+    const data = (await response.json().catch(() => null)) as { dashboardPath?: string } | null;
     const next = new URLSearchParams(window.location.search).get("next");
-    const destination = next?.startsWith("/") ? next : "/dashboard/seeker/profile";
+    const destination = next?.startsWith("/") ? next : data?.dashboardPath ?? "/dashboard/seeker/profile";
     setStatus("Logged in. Opening your dashboard…");
     startTransition(() => router.push(destination));
   }

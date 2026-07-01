@@ -8,7 +8,10 @@ export default function TermsPage() {
     <>
       <PageHeader title="Terms of Use" subtitle="The agreement that governs your use of CareersRX." />
       <div className="prose-job mx-auto max-w-3xl px-4 py-12 sm:px-6">
-        <p className="text-sm text-muted">Placeholder — to be reviewed by legal counsel before public launch.</p>
+        <p className="text-sm text-muted">
+          These terms describe the basic rules for using CareersRX as a job seeker,
+          employer, or visitor.
+        </p>
         <h2>Using the service</h2>
         <p>
           By using CareersRX you agree to provide accurate information, respect other users,

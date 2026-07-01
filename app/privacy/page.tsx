@@ -8,7 +8,10 @@ export default function PrivacyPage() {
     <>
       <PageHeader title="Privacy Policy" subtitle="How we collect, use, and protect your information." />
       <div className="prose-job mx-auto max-w-3xl px-4 py-12 sm:px-6">
-        <p className="text-sm text-muted">Placeholder — to be reviewed by legal counsel before public launch.</p>
+        <p className="text-sm text-muted">
+          CareersRX uses the information you provide to operate your account, profile,
+          live résumé, applications, saved jobs, and employer hiring workspace.
+        </p>
         <h2>Information we collect</h2>
         <p>
           Account details (name, email), profile information you provide, resumes you upload,

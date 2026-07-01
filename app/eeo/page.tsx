@@ -13,7 +13,7 @@ export default function EeoPage() {
         <p>
           We expect every employer on CareersRX to uphold these same principles. Job
           postings that contain discriminatory language or unlawful screening criteria are
-          not permitted and are removed during our review process.
+          not permitted and may be removed if identified.
         </p>
         <p>
           If you believe a posting violates these standards, please report it from the job

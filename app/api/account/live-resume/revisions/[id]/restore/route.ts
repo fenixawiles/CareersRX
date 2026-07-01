@@ -12,6 +12,7 @@ type RouteContext = {
 export async function POST(_request: Request, context: RouteContext) {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
+  if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
 
   const { id } = await context.params;
   return NextResponse.json(restoreSandboxRevision(id, sandboxIdForUser(user.id)));

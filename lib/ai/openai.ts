@@ -79,7 +79,7 @@ type ResumeImportInput = {
   contentType: string;
   extractedText: string;
   intent: ResumeImportIntent;
-  mode: "account" | "demo" | "signup";
+  mode: "account" | "signup";
   profile: SandboxProfile;
   resume: SandboxResume;
 };
@@ -89,7 +89,7 @@ type ResumeImportFollowupInput = {
   resumeImport: SandboxResumeImport;
   profile: SandboxProfile;
   resume: SandboxResume;
-  mode: "account" | "demo";
+  mode: "account";
 };
 
 export type RexAssistantInput = {
@@ -99,7 +99,7 @@ export type RexAssistantInput = {
   jobTitle?: string;
   message?: string;
   chatHistory?: RexChatTurn[];
-  mode: "account" | "demo";
+  mode: "account";
   profile: SandboxProfile;
   resume: SandboxResume;
   namedVersions: SandboxNamedResumeVersion[];
@@ -331,12 +331,10 @@ function deterministicResumeImportFollowup(input: ResumeImportFollowupInput): Re
   };
 }
 
-function navigationLinks(mode: RexAssistantInput["mode"]) {
-  const profileHref = mode === "demo" ? "/demo/profile" : "/dashboard/seeker/profile";
-  const resumeHref = mode === "demo" ? "/demo/live-resume" : "/dashboard/seeker/resume";
+function navigationLinks() {
   return {
-    profile: { label: "Open profile", href: profileHref },
-    live_resume: { label: "Open live résumé", href: resumeHref },
+    profile: { label: "Open profile", href: "/dashboard/seeker/profile" },
+    live_resume: { label: "Open live résumé", href: "/dashboard/seeker/resume" },
     applications: { label: "Open applications", href: "/dashboard/seeker/applications" },
     saved_jobs: { label: "Open saved jobs", href: "/dashboard/seeker/saved" },
     account: { label: "Open account settings", href: "/dashboard/seeker/account" },
@@ -349,7 +347,7 @@ function navigationLinks(mode: RexAssistantInput["mode"]) {
 
 function deterministicRexNavigation(input: RexAssistantInput): RexAssistantResponse {
   const target = input.navigationTarget ?? "profile";
-  const link = navigationLinks(input.mode)[target];
+  const link = navigationLinks()[target];
   return {
     assistantName: "Rex",
     answer: `I’m Rex, your CareersRX résumé and profile assistant. You can use this link to go directly there: ${link.label}.`,
@@ -372,7 +370,7 @@ function deterministicRexHelp(input: RexAssistantInput): RexAssistantResponse {
         "Review what employers see on your public profile.",
         "Use the live résumé workspace to choose what syncs to your profile.",
       ],
-      link: navigationLinks(input.mode).privacy,
+    link: navigationLinks().privacy,
       sectionPatch: null,
       sectionId: null,
       suggestionCards: [],
@@ -389,7 +387,7 @@ function deterministicRexHelp(input: RexAssistantInput): RexAssistantResponse {
       "Choose Update Profile only when the change should appear publicly.",
       "Choose Keep Résumé Only for role-specific wording.",
     ],
-    link: navigationLinks(input.mode).live_resume,
+    link: navigationLinks().live_resume,
     sectionPatch: null,
     sectionId: null,
     suggestionCards: [],
@@ -412,7 +410,7 @@ function deterministicRexAssistant(input: RexAssistantInput): RexAssistantRespon
       sectionPatch: null,
       sectionId: null,
       suggestionCards: [],
-      link: navigationLinks(input.mode).live_resume,
+      link: navigationLinks().live_resume,
       safetyNotes: ["Profile updates still require explicit approval."],
     };
   }

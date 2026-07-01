@@ -1,25 +1,22 @@
 import Link from "next/link";
-import { connection } from "next/server";
 import { Briefcase, Users, MapPin } from "lucide-react";
-import { getDemoCompany } from "@/lib/demo";
-import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
+import { getCurrentLocalUser } from "@/lib/local-auth";
+import { getCompanyForUser, listApplicationsForCompany, listJobsForCompany } from "@/lib/local-platform";
 import { DashboardHeading, Card, EmptyState } from "@/components/dashboard/DashboardUI";
+import { JobStatusActions } from "@/components/employer/JobStatusActions";
 import { JobStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { JOB_TYPE_LABELS } from "@/lib/constants";
 import { formatSalaryRange } from "@/lib/utils";
 
 export default async function EmployerJobs() {
-  await connection();
-
-  const company = await getDemoCompany();
-  if (!company) return null;
-
-  const jobs = await prisma.job.findMany({
-    where: { companyId: company.id },
-    orderBy: { publishedAt: "desc" },
-    include: { _count: { select: { applications: true } } },
-  });
+  const user = await getCurrentLocalUser();
+  if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/jobs");
+  const company = getCompanyForUser(user.id);
+  if (!company) redirect("/register/employer");
+  const jobs = listJobsForCompany(company.id);
+  const applications = listApplicationsForCompany(company.id);
 
   return (
     <div className="space-y-6">
@@ -71,7 +68,7 @@ export default async function EmployerJobs() {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
-                      <Users size={15} /> {job._count.applications}
+                      <Users size={15} /> {applications.filter((application) => application.jobId === job.id).length}
                     </span>
                     <Button
                       href={`/dashboard/employer/jobs/${job.id}/applicants`}
@@ -80,6 +77,7 @@ export default async function EmployerJobs() {
                     >
                       View Applicants
                     </Button>
+                    <JobStatusActions jobId={job.id} status={job.status} />
                   </div>
                 </div>
               </Card>

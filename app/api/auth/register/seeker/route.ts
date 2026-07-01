@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { createLocalSeekerAccount, createLocalSession, sessionCookieOptions } from "@/lib/local-auth";
+import {
+  createLocalSeekerAccount,
+  createLocalSession,
+  dashboardPathForUser,
+  sessionCookieOptions,
+} from "@/lib/local-auth";
 import type { LocalSignupInput } from "@/lib/local-auth";
 
 export const runtime = "nodejs";
@@ -41,7 +46,10 @@ export async function POST(request: Request) {
   }
 
   const session = createLocalSession(result.user.id);
-  const response = NextResponse.json({ user: result.user }, { status: 201 });
+  const response = NextResponse.json(
+    { user: result.user, dashboardPath: dashboardPathForUser(result.user) },
+    { status: 201 },
+  );
   response.cookies.set({
     ...sessionCookieOptions(session.expiresAt),
     value: session.token,

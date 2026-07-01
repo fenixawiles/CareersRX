@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { DashboardHeading } from "@/components/dashboard/DashboardUI";
-import { PublicProfilePreview } from "@/components/demo/PublicProfilePreview";
+import { PublicProfilePreview } from "@/components/profile/PublicProfilePreview";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
 import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
 

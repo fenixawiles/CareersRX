@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
 export default async function SeekerLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentLocalUser();
   if (!user) redirect("/login?next=/dashboard/seeker");
+  if (user.role !== "SEEKER") redirect("/dashboard/employer");
 
   return (
     <div className="mx-auto flex max-w-[1760px] flex-col lg:flex-row">

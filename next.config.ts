@@ -24,6 +24,14 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      { source: "/demo", destination: "/register", permanent: true },
+      { source: "/demo/live-resume", destination: "/dashboard/seeker/resume", permanent: true },
+      { source: "/demo/live-resume/signup", destination: "/register/seeker", permanent: true },
+      { source: "/demo/profile", destination: "/dashboard/seeker/profile", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

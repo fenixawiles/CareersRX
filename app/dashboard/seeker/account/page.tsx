@@ -12,7 +12,7 @@ export default async function SeekerAccountPage() {
     <div className="space-y-6">
       <DashboardHeading
         title="Account settings"
-        description="This account is stored in this CareersRX deployment’s SQLite workspace."
+        description="Manage your CareersRX account and connected profile workspace."
         action={<LogoutButton />}
       />
 

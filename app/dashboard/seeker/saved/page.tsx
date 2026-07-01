@@ -1,22 +1,15 @@
-import { connection } from "next/server";
+import { redirect } from "next/navigation";
 import { Bookmark } from "lucide-react";
-import { getDemoSeeker } from "@/lib/demo";
-import { prisma } from "@/lib/prisma";
+import { getCurrentLocalUser } from "@/lib/local-auth";
+import { listSavedJobsForSeeker } from "@/lib/local-platform";
 import { DashboardHeading, EmptyState } from "@/components/dashboard/DashboardUI";
 import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/Button";
 
 export default async function SeekerSaved() {
-  await connection();
-
-  const seeker = await getDemoSeeker();
-  if (!seeker) return null;
-
-  const saved = await prisma.savedJob.findMany({
-    where: { seekerId: seeker.id },
-    orderBy: { savedAt: "desc" },
-    include: { job: { include: { company: { select: { name: true, logoUrl: true } } } } },
-  });
+  const user = await getCurrentLocalUser();
+  if (!user || user.role !== "SEEKER") redirect("/login?next=/dashboard/seeker/saved");
+  const saved = listSavedJobsForSeeker(user.id);
 
   return (
     <div className="space-y-6">
@@ -39,7 +32,7 @@ export default async function SeekerSaved() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {saved.map((s) => (
-            <JobCard key={s.jobId} job={s.job} />
+            <JobCard key={s.id} job={s} />
           ))}
         </div>
       )}

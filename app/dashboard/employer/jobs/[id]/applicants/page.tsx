@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { connection } from "next/server";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, Users, FileText, Mail } from "lucide-react";
-import { getDemoCompany } from "@/lib/demo";
-import { prisma } from "@/lib/prisma";
+import { getCurrentLocalUser } from "@/lib/local-auth";
+import { getCompanyForUser, getJobForCompany, listApplicationsForCompany } from "@/lib/local-platform";
 import { DashboardHeading, Card, EmptyState } from "@/components/dashboard/DashboardUI";
 import { ApplicationStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -12,23 +11,14 @@ import { postedAgo } from "@/lib/utils";
 type Params = Promise<{ id: string }>;
 
 export default async function ApplicantsPage({ params }: { params: Params }) {
-  await connection();
-
   const { id } = await params;
-  const company = await getDemoCompany();
-  if (!company) return null;
-
-  const job = await prisma.job.findFirst({
-    where: { id, companyId: company.id },
-    include: {
-      applications: {
-        orderBy: { createdAt: "desc" },
-        include: { seeker: true },
-      },
-    },
-  });
-
+  const user = await getCurrentLocalUser();
+  if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/jobs");
+  const company = getCompanyForUser(user.id);
+  if (!company) redirect("/register/employer");
+  const job = getJobForCompany(id, company.id);
   if (!job) notFound();
+  const applications = listApplicationsForCompany(company.id, job.id);
 
   return (
     <div className="space-y-6">
@@ -41,10 +31,10 @@ export default async function ApplicantsPage({ params }: { params: Params }) {
 
       <DashboardHeading
         title={job.title}
-        description={`${job.applications.length} ${job.applications.length === 1 ? "applicant" : "applicants"}`}
+        description={`${applications.length} ${applications.length === 1 ? "applicant" : "applicants"}`}
       />
 
-      {job.applications.length === 0 ? (
+      {applications.length === 0 ? (
         <EmptyState
           icon={Users}
           title="No applicants yet"
@@ -52,22 +42,23 @@ export default async function ApplicantsPage({ params }: { params: Params }) {
         />
       ) : (
         <div className="space-y-3">
-          {job.applications.map((app) => (
+          {applications.map((app) => (
             <Card key={app.id}>
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0">
                   <h3 className="font-semibold text-foreground">
-                    {app.seeker.firstName} {app.seeker.lastName}
+                    {app.seekerName}
                   </h3>
                   <p className="text-sm text-muted">
-                    {app.seeker.city}, {app.seeker.state} · Applied{" "}
+                    {app.seekerLocation || "Location not provided"} · Applied{" "}
                     {postedAgo(app.createdAt).replace("Posted ", "")}
                   </p>
-                  {app.seeker.licenses.length > 0 ? (
+                  {Array.isArray(app.profileSnapshot.credentials) && app.profileSnapshot.credentials.length > 0 ? (
                     <p className="mt-1 text-sm text-muted">
-                      Licenses: {app.seeker.licenses.join(", ")}
+                      Credentials: {(app.profileSnapshot.credentials as string[]).join(", ")}
                     </p>
                   ) : null}
+                  {app.seekerHeadline ? <p className="mt-1 text-sm text-muted">{app.seekerHeadline}</p> : null}
                   {app.coverLetter ? (
                     <p className="mt-2 line-clamp-2 max-w-xl text-sm text-foreground">
                       “{app.coverLetter}”

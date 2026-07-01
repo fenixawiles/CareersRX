@@ -200,8 +200,9 @@ export function SeekerAccountSignupForm() {
       return;
     }
 
+    const data = (await response.json().catch(() => null)) as { dashboardPath?: string } | null;
     setStatus("Account created. Opening your profile…");
-    startTransition(() => router.push("/dashboard/seeker/profile"));
+    startTransition(() => router.push(data?.dashboardPath ?? "/dashboard/seeker/profile"));
   }
 
   return (
@@ -210,7 +211,7 @@ export function SeekerAccountSignupForm() {
         <div>
           <h2 className="font-semibold text-foreground">Create your CareersRX account</h2>
           <p className="mt-1 text-sm text-muted">
-            This creates a real SQLite-backed account, logs you in, builds your public
+            This creates your CareersRX account, logs you in, builds your public
             profile, and generates your first live résumé.
           </p>
         </div>
@@ -331,7 +332,7 @@ export function SeekerAccountSignupForm() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted">
-          {status || "Your account, session, profile, and live résumé persist in SQLite."}
+          {status || "Your account, profile, and live résumé will be saved in your CareersRX workspace."}
         </p>
         <Button
           type="submit"

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -12,9 +11,9 @@ import {
   Award,
   ArrowLeft,
 } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { getCurrentLocalUser } from "@/lib/local-auth";
+import { getPublicJobBySlug, isJobSaved, listRelatedPublicJobs } from "@/lib/local-platform";
 import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
 import { JobStructuredData } from "@/components/jobs/JobStructuredData";
 import { JobCard } from "@/components/jobs/JobCard";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
@@ -28,23 +27,13 @@ import { formatSalaryRange, formatCents, postedAgo } from "@/lib/utils";
 type Params = Promise<{ slug: string }>;
 
 async function getJob(slug: string) {
-  return prisma.job.findUnique({
-    where: { slug },
-    include: {
-      company: true,
-      facility: true,
-      screeningQuestions: { orderBy: { order: "asc" } },
-    },
-  });
+  return getPublicJobBySlug(slug);
 }
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params;
-  const job = await getJob(slug).catch((error) => {
-    console.warn("CareersRX job metadata is unavailable.", error);
-    return null;
-  });
-  if (!job || job.status !== "ACTIVE") {
+  const job = await getJob(slug);
+  if (!job) {
     return { title: "Job Not Available" };
   }
   return {
@@ -55,42 +44,14 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 }
 
 export default async function JobDetailPage({ params }: { params: Params }) {
-  await connection();
-
   const { slug } = await params;
-  const job = await getJob(slug).catch((error) => {
-    console.warn("CareersRX job detail data is unavailable.", error);
-    return undefined;
-  });
-
-  if (job === undefined) {
-    return <JobDataUnavailable />;
-  }
-
+  const job = await getJob(slug);
   if (!job) notFound();
 
-  // Expired/closed jobs: no longer available (Demo Gate version of the 410 path)
-  if (job.status !== "ACTIVE") {
-    return <UnavailableJob />;
-  }
-
   const salary = formatSalaryRange(job);
-
-  const relatedJobs = await prisma.job
-    .findMany({
-      where: {
-        status: "ACTIVE",
-        category: job.category,
-        id: { not: job.id },
-      },
-      take: 3,
-      orderBy: { publishedAt: "desc" },
-      include: { company: { select: { name: true, logoUrl: true } } },
-    })
-    .catch((error) => {
-      console.warn("CareersRX related jobs are unavailable.", error);
-      return [];
-    });
+  const user = await getCurrentLocalUser();
+  const saved = user?.role === "SEEKER" ? isJobSaved(user.id, job.id) : false;
+  const relatedJobs = listRelatedPublicJobs(job);
 
   return (
     <>
@@ -160,37 +121,30 @@ export default async function JobDetailPage({ params }: { params: Params }) {
             {/* Description sections (seed content is trusted HTML; employer-submitted
                 content is sanitized server-side at creation in a later phase) */}
             <article className="prose-job mt-6 rounded-2xl border border-border bg-surface p-6">
-              <div dangerouslySetInnerHTML={{ __html: job.description }} />
+              <TextBlock content={job.description} />
               {job.requirements ? (
                 <>
                   <h2>Requirements</h2>
-                  <div dangerouslySetInnerHTML={{ __html: job.requirements }} />
+                  <TextBlock content={job.requirements} />
                 </>
               ) : null}
               {job.benefits ? (
                 <>
                   <h2>Benefits</h2>
-                  <div dangerouslySetInnerHTML={{ __html: job.benefits }} />
+                  <TextBlock content={job.benefits} />
                 </>
               ) : null}
 
-              {(job.requiredLicenses.length > 0 || job.requiredCertifications.length > 0) && (
+              {job.requirements ? (
                 <>
                   <h2>Credentials</h2>
                   <div className="not-prose flex flex-wrap gap-2">
-                    {job.requiredLicenses.map((l) => (
-                      <Badge key={l} tone="primary" icon={<Award size={13} />}>
-                        {l}
-                      </Badge>
-                    ))}
-                    {job.requiredCertifications.map((c) => (
-                      <Badge key={c} tone="neutral">
-                        {c}
-                      </Badge>
-                    ))}
+                    <Badge tone="primary" icon={<Award size={13} />}>
+                      Review requirements before applying
+                    </Badge>
                   </div>
                 </>
-              )}
+              ) : null}
 
               <h2>Equal Opportunity</h2>
               <p className="text-sm text-muted">{job.eeoStatement}</p>
@@ -205,7 +159,13 @@ export default async function JobDetailPage({ params }: { params: Params }) {
                 Send your application in just a minute.
               </p>
               <div className="mt-4">
-                <ApplyButton jobTitle={job.title} companyName={job.company.name} />
+                <ApplyButton
+                  jobId={job.id}
+                  jobTitle={job.title}
+                  companyName={job.company.name}
+                  initiallySaved={saved}
+                  canApply={user?.role === "SEEKER"}
+                />
               </div>
               <div className="mt-5 border-t border-border pt-4 text-sm text-muted">
                 <p className="flex items-center gap-1.5">
@@ -238,38 +198,10 @@ export default async function JobDetailPage({ params }: { params: Params }) {
   );
 }
 
-function JobDataUnavailable() {
+function TextBlock({ content }: { content: string }) {
   return (
-    <div className="mx-auto max-w-xl px-4 py-20 text-center sm:px-6">
-      <h1 className="text-2xl font-bold text-foreground">Job listings are being prepared</h1>
-      <p className="mt-2 text-muted">
-        CareersRX is online, but the production jobs database is not connected yet. You can still try the live résumé
-        workspace and profile flow.
-      </p>
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <Button href="/demo/live-resume" size="md">
-          Try Live Résumé Demo
-        </Button>
-        <Button href="/jobs" variant="outline" size="md">
-          Back to Jobs
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function UnavailableJob() {
-  return (
-    <div className="mx-auto max-w-xl px-4 py-20 text-center sm:px-6">
-      <h1 className="text-2xl font-bold text-foreground">This position is no longer available</h1>
-      <p className="mt-2 text-muted">
-        The job you’re looking for has been filled or has expired.
-      </p>
-      <div className="mt-6">
-        <Button href="/jobs" size="md">
-          Browse open jobs
-        </Button>
-      </div>
+    <div className="whitespace-pre-wrap text-sm leading-7 text-foreground">
+      {content}
     </div>
   );
 }
