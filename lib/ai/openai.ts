@@ -40,6 +40,8 @@ type AiResult<T> = {
   demoMode: boolean;
 };
 
+type OpenAiDiagnosticContext = Record<string, string | number | boolean | null | undefined>;
+
 type ResumeAnalysisInput = {
   documentTitle: string;
   previousVersionText?: string | null;
@@ -117,6 +119,48 @@ function modelConfig() {
     fallbackModel: process.env.OPENAI_FALLBACK_MODEL ?? "gpt-5.2",
     store: process.env.OPENAI_STORE_RESPONSES === "true",
   };
+}
+
+function redactOpenAiLogText(text: string) {
+  return text
+    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/(OPENAI_API_KEY=)[^\s]+/gi, "$1[redacted]");
+}
+
+function errorField(error: unknown, field: string) {
+  if (!error || typeof error !== "object" || !(field in error)) return undefined;
+  const value = (error as Record<string, unknown>)[field];
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ? value
+    : undefined;
+}
+
+function summarizeOpenAiError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    name: error instanceof Error ? error.name : typeof error,
+    message: redactOpenAiLogText(message).slice(0, 800),
+    status: errorField(error, "status"),
+    code: errorField(error, "code"),
+    type: errorField(error, "type"),
+    requestId: errorField(error, "request_id") ?? errorField(error, "requestID"),
+  };
+}
+
+function logOpenAiMissingKey(feature: string, context: OpenAiDiagnosticContext = {}) {
+  console.warn("[careersrx/openai] OPENAI_API_KEY missing; using local fallback", {
+    feature,
+    ...context,
+  });
+}
+
+function logOpenAiFallback(feature: string, error: unknown, context: OpenAiDiagnosticContext = {}) {
+  console.error("[careersrx/openai] Live GPT request failed; using local fallback", {
+    feature,
+    ...context,
+    error: summarizeOpenAiError(error),
+  });
 }
 
 function usageFrom(response: unknown) {
@@ -487,7 +531,7 @@ function deterministicRexAssistant(input: RexAssistantInput): RexAssistantRespon
 
   return {
     assistantName: "Rex",
-    answer: `I’m Rex, your CareersRX résumé and profile assistant. I can review ${section.title} and suggest improvements, but the API key is not configured for live GPT suggestions in this environment.`,
+    answer: `I’m Rex, your CareersRX résumé and profile assistant. I can review ${section.title} and suggest improvements. Live GPT suggestions are unavailable right now, so CareersRX returned safe local guidance instead.`,
     suggestions: [
       "Make the first sentence specific to the target role.",
       "Keep claims factual and supported by your profile.",
@@ -922,7 +966,7 @@ export async function answerResumeImportFollowupWithRex(
 export async function answerRexAssistant(
   input: RexAssistantInput,
 ): Promise<AiResult<RexAssistantResponse>> {
-  const { fallbackModel } = modelConfig();
+  const { model, fallbackModel } = modelConfig();
   if (input.task === "site_navigation") {
     return {
       output: deterministicRexNavigation(input),
@@ -944,6 +988,12 @@ export async function answerRexAssistant(
   }
 
   if (!process.env.OPENAI_API_KEY) {
+    logOpenAiMissingKey("rex_assistant", {
+      task: input.task,
+      sectionId: selectedSection(input)?.id,
+      model,
+      fallbackModel,
+    });
     return {
       output: deterministicRexAssistant(input),
       model: "demo-rules",
@@ -1007,7 +1057,14 @@ export async function answerRexAssistant(
         "You are Rex, the CareersRX résumé and profile assistant for a job board. Introduce yourself as Rex when helpful. Be calm, concise, professional, and not cute or robotic. You can only use the current user's provided profile and live résumé context. Do not claim access to other users, employers, admin data, rankings, or private platform-wide records. Do not mutate profile data. For rewrite tasks, return an optional sectionPatch only for the selected section. For resume_hygiene, suggest_skills_for_role, and useful chat answers, return suggestionCards when there is a safe editor-only change; each card must target an existing section or use null with patch null. Skills suggestions must be framed as items to consider only if accurate. If the request is outside résumé/profile/site help, decline briefly and point to the supported prompt cards.",
       input: JSON.stringify(safeContext),
     });
-  } catch {
+  } catch (error) {
+    logOpenAiFallback("rex_assistant", error, {
+      task: input.task,
+      sectionId: section?.id,
+      model,
+      fallbackModel,
+      keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+    });
     return {
       output: {
         ...deterministicRexAssistant(input),
