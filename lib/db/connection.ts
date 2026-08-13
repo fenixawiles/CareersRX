@@ -3,6 +3,7 @@ import "server-only";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createRequire } from "node:module";
+import { ensureMigrated } from "@/lib/db/migrate";
 
 export type SqlValue = string | number | bigint | null | Uint8Array;
 
@@ -88,6 +89,7 @@ export function getSqliteConnection(dbPath: string): SqliteConnection {
   mkdirSync(dirname(dbPath), { recursive: true });
   const connection = new (databaseConstructor())(dbPath);
   configure(connection);
+  ensureMigrated(connection);
   connections.set(dbPath, connection);
   return connection;
 }
