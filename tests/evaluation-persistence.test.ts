@@ -127,6 +127,10 @@ describe("evaluation persistence", () => {
       .toEqual({ locked_by_decision_id: decision.id });
     expect(queryFile<{ current_decision_id: string; disposition_state: string }>(dbPath, "SELECT current_decision_id, disposition_state FROM local_applications WHERE id = ?", ["application"])[0])
       .toEqual({ current_decision_id: decision.id, disposition_state: "NOT_ADVANCED" });
+    expect(queryFile<{ type: string; recipient_user_id: string }>(dbPath, "SELECT type, recipient_user_id FROM notifications")[0])
+      .toEqual({ type: "DECISION_AVAILABLE", recipient_user_id: "seeker" });
+    expect(queryFile<{ state: string; channel: string }>(dbPath, "SELECT state, channel FROM notification_outbox")[0])
+      .toEqual({ state: "PENDING", channel: "EMAIL" });
   });
 
   it("rejects ungrounded model deficiencies and cross-organization access", () => {

@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { queryFile, queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
 import { assessmentAfterEvidence, verifyEvidence, type EvidenceCandidate } from "@/lib/evaluation/evidence-verify";
+import { enqueueNotification } from "@/lib/notify/enqueue";
 
 type FindingAssessment = "SATISFIED" | "NOT_SATISFIED" | "INSUFFICIENT_EVIDENCE" | "REQUIRES_HUMAN_JUDGMENT";
 type FindingOrigin = "DETERMINISTIC_RULE" | "MODEL";
@@ -69,6 +70,7 @@ export type EvaluationFindingInput = {
 type ApplicationRow = {
   id: string;
   company_id: string;
+  seeker_user_id: string;
   criteria_set_id: string;
   evaluation_state: string;
   disposition_state: string;
@@ -127,7 +129,7 @@ function applicationForActor(dbPath: string, actor: EmployerActor, applicationId
   activeActor(dbPath, actor);
   const application = queryOneFile<ApplicationRow>(
     dbPath,
-    `SELECT application.id, job.company_id, application.criteria_set_id, application.evaluation_state,
+    `SELECT application.id, job.company_id, application.seeker_user_id, application.criteria_set_id, application.evaluation_state,
             application.disposition_state, application.current_decision_id, application.profile_snapshot_json,
             application.resume_snapshot_json, application.job_id
      FROM local_applications application
@@ -547,6 +549,12 @@ export function recordEmployerDecision(
       "UPDATE local_applications SET current_decision_id = ?, disposition_state = ?, status = 'REVIEWED', updated_at = ? WHERE id = ?",
       [id, disposition, createdAt, application.id],
     );
+    const { notificationId } = enqueueNotification(dbPath, {
+      recipientUserId: application.seeker_user_id,
+      applicationId: application.id,
+      type: "DECISION_AVAILABLE",
+      payload: { decisionId: id, applicationId: application.id },
+    });
     runFile(
       dbPath,
       `INSERT INTO application_transitions (id, application_id, from_state, to_state, actor_kind, actor_user_id, rule_criterion_id, rationale, created_at)
@@ -559,7 +567,13 @@ export function recordEmployerDecision(
       entityId: id,
       companyId: actor.companyId,
       actorUserId: actor.userId,
-      metadata: { applicationId: application.id, evaluationId: evaluation?.id ?? null, decision: input.decision, reasonCategory: input.reasonCategory ?? null },
+      metadata: {
+        applicationId: application.id,
+        evaluationId: evaluation?.id ?? null,
+        decision: input.decision,
+        reasonCategory: input.reasonCategory ?? null,
+        notificationId,
+      },
     });
     return { id, disposition };
   });
