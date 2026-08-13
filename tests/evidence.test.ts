@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessmentAfterEvidence, verifyEvidence } from "../lib/evaluation/evidence-verify";
-import { explanationSentence } from "../lib/evaluation/explain";
+import { buildApplicantExplanation, explanationSentence, renderApplicantExplanation } from "../lib/evaluation/explain";
 
 describe("evidence verification", () => {
   it("does not let negated evidence support satisfaction", () => {
@@ -35,5 +35,21 @@ describe("evidence verification", () => {
       verifyEvidence({ profile: { summary: text } }, candidate, { ruleTemplateId: "LEGAL_MINIMUM_AGE" })
         ?.protectedContentAdmittedUnderTemplate,
     ).toBe(true);
+  });
+
+  it("writes applicant-safe explanations only from eligible cited facts", () => {
+    const explanation = buildApplicantExplanation({
+      decision: "DO_NOT_ADVANCE",
+      reasonCategory: "MANDATORY_CRITERION_NOT_MET",
+      findings: [
+        { criterion: "active license", disposition: "MANDATORY", origin: "DETERMINISTIC_RULE", assessment: "NOT_SATISFIED" },
+        { criterion: "leadership", disposition: "PREFERRED", origin: "MODEL", assessment: "INSUFFICIENT_EVIDENCE" },
+        { criterion: "pregnancy status", disposition: "MANDATORY", origin: "DETERMINISTIC_RULE", assessment: "NOT_SATISFIED" },
+      ],
+    });
+    expect(explanation.reasons).toEqual(["The application did not meet the posted mandatory requirement for active license."]);
+    const rendered = renderApplicantExplanation(explanation);
+    expect(rendered).not.toMatch(/model|pregnancy/i);
+    expect(rendered).toContain("It does not use a score, ranking, prediction, or automated hiring decision.");
   });
 });
