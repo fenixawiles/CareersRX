@@ -46,3 +46,6 @@ next-env.d.ts
 # Local no-login sandbox persistence
 /data/*.sqlite
 /data/*.sqlite-*
+
+# Local codebase-analysis artifacts
+/graphify-out/

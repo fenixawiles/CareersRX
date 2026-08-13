@@ -26,6 +26,9 @@ import { formatSalaryRange, formatCents, postedAgo } from "@/lib/utils";
 
 type Params = Promise<{ slug: string }>;
 
+// Job data is backed by runtime SQLite; this route must never be prerendered during next build.
+export const dynamic = "force-dynamic";
+
 async function getJob(slug: string) {
   return getPublicJobBySlug(slug);
 }
