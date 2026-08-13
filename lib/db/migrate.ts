@@ -5,6 +5,7 @@ import { baselineMigration } from "@/lib/db/migrations/001_baseline";
 import { integrityMigration } from "@/lib/db/migrations/002_integrity";
 import { criteriaMigration } from "@/lib/db/migrations/003_criteria";
 import { applicationLockMigration } from "@/lib/db/migrations/004_application_lock";
+import { evaluationMigration } from "@/lib/db/migrations/005_evaluation";
 
 type Migration = {
   version: number;
@@ -19,7 +20,13 @@ type AppliedMigration = {
   checksum: string;
 };
 
-const migrations: Migration[] = [baselineMigration, integrityMigration, criteriaMigration, applicationLockMigration];
+const migrations: Migration[] = [
+  baselineMigration,
+  integrityMigration,
+  criteriaMigration,
+  applicationLockMigration,
+  evaluationMigration,
+];
 
 function ensureMigrationTable(connection: SqliteConnection) {
   connection.exec(`
