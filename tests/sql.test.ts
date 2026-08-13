@@ -34,6 +34,7 @@ describe("SQLite transaction primitives", () => {
       { version: 3, name: "criteria" },
       { version: 4, name: "application_lock" },
       { version: 5, name: "evaluation" },
+      { version: 6, name: "evaluation_integrity" },
     ]);
     expect(tables[0]?.count).toBe(17);
   });

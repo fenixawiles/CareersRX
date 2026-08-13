@@ -6,6 +6,7 @@ import { integrityMigration } from "@/lib/db/migrations/002_integrity";
 import { criteriaMigration } from "@/lib/db/migrations/003_criteria";
 import { applicationLockMigration } from "@/lib/db/migrations/004_application_lock";
 import { evaluationMigration } from "@/lib/db/migrations/005_evaluation";
+import { evaluationIntegrityMigration } from "@/lib/db/migrations/006_evaluation_integrity";
 
 type Migration = {
   version: number;
@@ -26,6 +27,7 @@ const migrations: Migration[] = [
   criteriaMigration,
   applicationLockMigration,
   evaluationMigration,
+  evaluationIntegrityMigration,
 ];
 
 function ensureMigrationTable(connection: SqliteConnection) {
