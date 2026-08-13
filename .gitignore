@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Local codebase-analysis artifacts
 /graphify-out/
+
+# Local Synchri reviewer scratch notes
+/review*.txt
