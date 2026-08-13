@@ -39,30 +39,6 @@ export const resumeChangeDetectionSchema = z.object({
   safetyNotes: z.array(z.string()).max(8).default([]),
 });
 
-export const jobFitComparisonSchema = z.object({
-  fitSummary: z.string().min(10).max(1500),
-  supportedMatches: z
-    .array(
-      z.object({
-        kind: z.enum(["license", "certification", "skill", "experience", "preference"]),
-        label: z.string().min(1).max(160),
-        evidence: z.string().min(1).max(400),
-      }),
-    )
-    .max(20),
-  missingRequirements: z
-    .array(
-      z.object({
-        kind: z.enum(["license", "certification", "skill", "experience", "location", "other"]),
-        label: z.string().min(1).max(160),
-        reason: z.string().min(1).max(500),
-      }),
-    )
-    .max(20),
-  unsupportedClaims: z.array(z.string()).max(12).default([]),
-  recommendation: z.enum(["READY", "NEEDS_REVIEW", "NOT_READY"]),
-});
-
 export const rexAssistantTaskSchema = z.enum([
   "review_summary",
   "review_section",
@@ -186,7 +162,6 @@ export const resumeImportFollowupSchema = z.object({
 
 export type ResumeSyncProposalDraft = z.infer<typeof resumeSyncProposalDraftSchema>;
 export type ResumeChangeDetection = z.infer<typeof resumeChangeDetectionSchema>;
-export type JobFitComparison = z.infer<typeof jobFitComparisonSchema>;
 export type RexAssistantTask = z.infer<typeof rexAssistantTaskSchema>;
 export type RexNavigationTarget = z.infer<typeof rexNavigationTargetSchema>;
 export type RexChatTurn = z.infer<typeof rexChatTurnSchema>;

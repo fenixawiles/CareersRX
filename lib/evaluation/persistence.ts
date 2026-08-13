@@ -520,15 +520,17 @@ function persistReleasedApplicantExplanation(
   runFile(
     dbPath,
     `INSERT INTO applicant_explanations (
-      id, application_id, evaluation_id, decision_id, criteria_set_id, body_json, rendered_text,
+      id, application_id, evaluation_id, decision_id, criteria_set_id, applicant_user_id, company_id, body_json, rendered_text,
       generated_at, released_at, released_by_user_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.application.id,
       input.evaluation.id,
       input.decisionId,
       input.application.criteria_set_id,
+      input.application.seeker_user_id,
+      input.application.company_id,
       JSON.stringify(explanation),
       renderApplicantExplanation(explanation),
       releasedAt,

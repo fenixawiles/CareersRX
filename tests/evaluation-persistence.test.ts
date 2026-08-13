@@ -11,6 +11,7 @@ import {
   startEvaluationRun,
   type EmployerActor,
 } from "../lib/evaluation/persistence";
+import { pseudonymizeApplication } from "../lib/retention/pseudonymize";
 
 function temporaryDatabasePath() {
   return join(mkdtempSync(join(tmpdir(), "careersrx-evaluation-test-")), "test.sqlite");
@@ -136,6 +137,10 @@ describe("evaluation persistence", () => {
     );
     expect(queryFile<{ state: string; channel: string }>(dbPath, "SELECT state, channel FROM notification_outbox")[0])
       .toEqual({ state: "PENDING", channel: "EMAIL" });
+    expect(pseudonymizeApplication(dbPath, "application")).toBe(true);
+    expect(queryFile<{ profile_snapshot_json: string; pseudonymized_at: string | null }>(dbPath, "SELECT profile_snapshot_json, pseudonymized_at FROM local_applications WHERE id = ?", ["application"])[0])
+      .toEqual({ profile_snapshot_json: '{"redacted":true}', pseudonymized_at: expect.any(String) });
+    expect(pseudonymizeApplication(dbPath, "application")).toBe(false);
   });
 
   it("rejects ungrounded model deficiencies and cross-organization access", () => {

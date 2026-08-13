@@ -3,12 +3,10 @@ import "server-only";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import {
-  jobFitComparisonSchema,
   rexAssistantResponseSchema,
   resumeImportFollowupSchema,
   resumeImportParseSchema,
   resumeChangeDetectionSchema,
-  type JobFitComparison,
   type RexAssistantResponse,
   type RexAssistantTask,
   type RexChatTurn,
@@ -53,27 +51,6 @@ type ResumeAnalysisInput = {
     preferredCategories: string[];
     preferredStates: string[];
   };
-};
-
-type JobFitInput = {
-  job: {
-    title: string;
-    category: string;
-    requirements?: string | null;
-    requiredLicenses: string[];
-    requiredCertifications: string[];
-    requiredYearsExp?: number | null;
-    city?: string | null;
-    state?: string | null;
-  };
-  profile: {
-    skills: string[];
-    licenses: string[];
-    certifications: string[];
-    preferredCategories: string[];
-    preferredStates: string[];
-  };
-  resumeText: string;
 };
 
 type ResumeImportInput = {
@@ -630,82 +607,6 @@ function deterministicResumeAnalysis(input: ResumeAnalysisInput): ResumeChangeDe
   };
 }
 
-function deterministicJobFit(input: JobFitInput): JobFitComparison {
-  const profileLicenses = new Set(input.profile.licenses.map((item) => item.toLowerCase()));
-  const profileCerts = new Set(input.profile.certifications.map((item) => item.toLowerCase()));
-  const resumeText = input.resumeText.toLowerCase();
-
-  const missingLicenses = input.job.requiredLicenses.filter(
-    (license) => !profileLicenses.has(license.toLowerCase()),
-  );
-  const missingCertifications = input.job.requiredCertifications.filter(
-    (cert) => !profileCerts.has(cert.toLowerCase()),
-  );
-
-  const supportedMatches: JobFitComparison["supportedMatches"] = [];
-  for (const license of input.job.requiredLicenses) {
-    if (profileLicenses.has(license.toLowerCase())) {
-      supportedMatches.push({
-        kind: "license",
-        label: license,
-        evidence: "Present in the structured profile licenses.",
-      });
-    }
-  }
-  for (const cert of input.job.requiredCertifications) {
-    if (profileCerts.has(cert.toLowerCase())) {
-      supportedMatches.push({
-        kind: "certification",
-        label: cert,
-        evidence: "Present in the structured profile certifications.",
-      });
-    }
-  }
-  for (const skill of input.profile.skills) {
-    if (resumeText.includes(skill.toLowerCase())) {
-      supportedMatches.push({
-        kind: "skill",
-        label: skill,
-        evidence: "Supported by both profile data and résumé text.",
-      });
-    }
-  }
-
-  const missingRequirements: JobFitComparison["missingRequirements"] = [
-    ...missingLicenses.map((license) => ({
-      kind: "license" as const,
-      label: license,
-      reason: "Required by the job but not present in the structured profile.",
-    })),
-    ...missingCertifications.map((certification) => ({
-      kind: "certification" as const,
-      label: certification,
-      reason: "Required by the job but not present in the structured profile.",
-    })),
-  ];
-
-  if (/epic/i.test(input.job.requirements ?? "") && !includesAny(resumeText, ["epic"])) {
-    missingRequirements.push({
-      kind: "skill",
-      label: "Epic",
-      reason: "Mentioned in job requirements but not supported by the résumé or profile.",
-    });
-  }
-
-  const recommendation = missingRequirements.length === 0 ? "READY" : "NEEDS_REVIEW";
-
-  return {
-    fitSummary:
-      missingRequirements.length === 0
-        ? "The packet has supported matches for the listed job requirements."
-        : "The packet has useful matches, but missing requirements need review before applying.",
-    supportedMatches: supportedMatches.slice(0, 20),
-    missingRequirements,
-    unsupportedClaims: [],
-    recommendation,
-  };
-}
-
 async function parseWithFallback<T>({
   schemaName,
   schema,
@@ -778,32 +679,6 @@ export async function detectResumeChanges(input: ResumeAnalysisInput): Promise<A
   return {
     ...result,
     output: resumeChangeDetectionSchema.parse(result.output),
-  };
-}
-
-export async function compareJobFit(input: JobFitInput): Promise<AiResult<JobFitComparison>> {
-  const { fallbackModel } = modelConfig();
-  if (!process.env.OPENAI_API_KEY) {
-    return {
-      output: deterministicJobFit(input),
-      model: "demo-rules",
-      fallbackModel,
-      usedFallback: false,
-      demoMode: true,
-    };
-  }
-
-  const result = await parseWithFallback<JobFitComparison>({
-    schemaName: "careersrx_job_fit_comparison",
-    schema: jobFitComparisonSchema,
-    instructions:
-      "You are CareersRX, a seeker-side application packet reviewer. Compare the job, structured profile, and selected résumé. Surface supported matches and missing requirements. Never add skills or credentials that are not supported by the profile or résumé. Do not rank candidates for employers.",
-    input: JSON.stringify(input),
-  });
-
-  return {
-    ...result,
-    output: jobFitComparisonSchema.parse(result.output),
   };
 }
 

@@ -9,6 +9,7 @@ import { evaluationMigration } from "@/lib/db/migrations/005_evaluation";
 import { evaluationIntegrityMigration } from "@/lib/db/migrations/006_evaluation_integrity";
 import { notificationsMigration } from "@/lib/db/migrations/007_notifications";
 import { explanationIntegrityMigration } from "@/lib/db/migrations/008_explanation_integrity";
+import { retentionMigration } from "@/lib/db/migrations/009_retention";
 
 type Migration = {
   version: number;
@@ -32,6 +33,7 @@ const migrations: Migration[] = [
   evaluationIntegrityMigration,
   notificationsMigration,
   explanationIntegrityMigration,
+  retentionMigration,
 ];
 
 function ensureMigrationTable(connection: SqliteConnection) {
