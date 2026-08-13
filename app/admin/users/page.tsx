@@ -3,8 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { DashboardHeading } from "@/components/dashboard/DashboardUI";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { requireAdmin } from "@/lib/auth/policy";
 
 export default async function AdminUsers() {
+  await requireAdmin();
   await connection();
 
   const users = await prisma.user.findMany({

@@ -4,8 +4,10 @@ import { Building2, Briefcase, Flag, Users, ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, StatCard, Card } from "@/components/dashboard/DashboardUI";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
+import { requireAdmin } from "@/lib/auth/policy";
 
 export default async function AdminOverview() {
+  await requireAdmin();
   await connection();
 
   const [pendingEmployers, pendingJobs, openReports, totalUsers, recentCompanies] =

@@ -5,8 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
+import { requireAdmin } from "@/lib/auth/policy";
 
 export default async function AdminEmployers() {
+  await requireAdmin();
   await connection();
 
   const companies = await prisma.company.findMany({

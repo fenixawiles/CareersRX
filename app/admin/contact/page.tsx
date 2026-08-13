@@ -2,8 +2,10 @@ import { connection } from "next/server";
 import { Mail } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, EmptyState } from "@/components/dashboard/DashboardUI";
+import { requireAdmin } from "@/lib/auth/policy";
 
 export default async function AdminContact() {
+  await requireAdmin();
   await connection();
 
   const submissions = await prisma.contactSubmission.findMany({

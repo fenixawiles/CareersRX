@@ -1,4 +1,5 @@
 import { DashboardNav, type NavItem } from "@/components/dashboard/DashboardNav";
+import { requireAdmin } from "@/lib/auth/policy";
 
 // Admin pages are sensitive and per-session — always render on demand.
 export const dynamic = "force-dynamic";
@@ -13,7 +14,9 @@ const NAV: NavItem[] = [
   { href: "/admin/audit", label: "Audit Log", icon: "audit" },
 ];
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  await requireAdmin();
+
   return (
     <div className="mx-auto flex max-w-7xl flex-col lg:flex-row">
       <DashboardNav items={NAV} title="Admin" />

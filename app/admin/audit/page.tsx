@@ -2,8 +2,10 @@ import { connection } from "next/server";
 import { ScrollText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { DashboardHeading, EmptyState } from "@/components/dashboard/DashboardUI";
+import { requireAdmin } from "@/lib/auth/policy";
 
 export default async function AdminAudit() {
+  await requireAdmin();
   await connection();
 
   const logs = await prisma.auditLog.findMany({

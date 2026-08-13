@@ -7,6 +7,7 @@ import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { FACILITY_TYPE_LABELS } from "@/lib/constants";
+import { requireAdmin } from "@/lib/auth/policy";
 
 type Params = Promise<{ id: string }>;
 
@@ -18,6 +19,7 @@ const CHECKLIST = [
 ];
 
 export default async function AdminEmployerDetail({ params }: { params: Params }) {
+  await requireAdmin();
   await connection();
 
   const { id } = await params;

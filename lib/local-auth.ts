@@ -4,6 +4,7 @@ import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypt
 import path from "node:path";
 import { cookies } from "next/headers";
 import { createLocalCompanyForOwner } from "@/lib/local-platform";
+import { queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
 import { createSandboxProfile } from "@/lib/sqlite-sandbox";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import type { SandboxSignupInput } from "@/lib/sandbox-types";
@@ -22,6 +23,7 @@ export type LocalUser = {
   lastName: string;
   fullName: string;
   role: LocalUserRole;
+  isAdmin: boolean;
   createdAt: string;
 };
 
@@ -63,6 +65,7 @@ function initializeLocalAuth() {
       last_name TEXT NOT NULL,
       full_name TEXT NOT NULL,
       role TEXT NOT NULL,
+      is_admin INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -74,6 +77,27 @@ function initializeLocalAuth() {
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
+    );
+  `);
+
+  const hasAdminColumn = querySql<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM pragma_table_info('local_users') WHERE name = 'is_admin'",
+  )[0]?.count;
+  if (!hasAdminColumn) {
+    runSql("ALTER TABLE local_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
+
+  runSql(`
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      actor_kind TEXT NOT NULL,
+      actor_user_id TEXT,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      company_id TEXT,
+      metadata_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
     );
   `);
 }
@@ -113,6 +137,7 @@ function mapUser(row: Record<string, unknown>): LocalUser {
     lastName: String(row.last_name ?? ""),
     fullName: String(row.full_name ?? ""),
     role,
+    isAdmin: Number(row.is_admin ?? 0) === 1,
     createdAt: String(row.created_at ?? ""),
   };
 }
@@ -179,6 +204,7 @@ export function createLocalSeekerAccount(input: LocalSignupInput) {
     lastName,
     fullName,
     role: "SEEKER",
+    isAdmin: false,
     createdAt: now(),
   };
   const timestamp = now();
@@ -236,6 +262,7 @@ export function createLocalEmployerAccount(input: LocalEmployerSignupInput) {
     lastName: lastParts.join(" "),
     fullName: contactName,
     role: "EMPLOYER",
+    isAdmin: false,
     createdAt: now(),
   };
   const timestamp = now();
@@ -271,11 +298,62 @@ export function authenticateLocalUser(email: string, password: string) {
   return mapUser(row);
 }
 
-export async function getCurrentLocalUser() {
+/**
+ * Performs the single permitted bootstrap of a local administrator. This intentionally has no HTTP
+ * caller: an operator must first register normally, then run scripts/bootstrap-admin.ts with the
+ * registered email in ADMIN_SEED_EMAIL.
+ */
+export function bootstrapLocalAdmin(email: string) {
   initializeLocalAuth();
+  const existingAdmin = queryOneFile<{ count: number }>(
+    dbPath,
+    "SELECT COUNT(*) AS count FROM local_users WHERE is_admin = 1",
+  );
+  if (Number(existingAdmin?.count ?? 0) > 0) {
+    return { ok: false as const, error: "An administrator already exists" };
+  }
+
+  const user = queryOneFile<Record<string, unknown>>(
+    dbPath,
+    "SELECT * FROM local_users WHERE email = ?",
+    [normalizeEmail(email)],
+  );
+  if (!user) return { ok: false as const, error: "Register this user before bootstrapping an administrator" };
+
+  const timestamp = now();
+  const id = randomBytes(16).toString("hex");
+  transactionFile(dbPath, () => {
+    runFile(dbPath, "UPDATE local_users SET is_admin = 1, updated_at = ? WHERE id = ?", [timestamp, String(user.id)]);
+    runFile(
+      dbPath,
+      `INSERT INTO audit_events (
+        id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        "ADMIN_BOOTSTRAPPED",
+        "SYSTEM",
+        null,
+        "LOCAL_USER",
+        String(user.id),
+        null,
+        JSON.stringify({ email: normalizeEmail(email) }),
+        timestamp,
+      ],
+    );
+  });
+
+  return { ok: true as const, email: String(user.email) };
+}
+
+export async function getCurrentLocalUser() {
   const cookieStore = await cookies();
   const token = cookieStore.get(LOCAL_SESSION_COOKIE)?.value;
   if (!token) return null;
+
+  // Read request-bound cookies before opening SQLite so Next marks callers such as the root
+  // navigation as dynamic rather than attempting database access while prerendering a build.
+  initializeLocalAuth();
 
   const tokenHash = hashToken(token);
   const [session] = querySql<Record<string, unknown>>(
