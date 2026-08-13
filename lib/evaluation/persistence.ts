@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { queryFile, queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
 import { assessmentAfterEvidence, verifyEvidence, type EvidenceCandidate } from "@/lib/evaluation/evidence-verify";
+import { buildApplicantExplanation, renderApplicantExplanation } from "@/lib/evaluation/explain";
 import { enqueueNotification } from "@/lib/notify/enqueue";
 
 type FindingAssessment = "SATISFIED" | "NOT_SATISFIED" | "INSUFFICIENT_EVIDENCE" | "REQUIRES_HUMAN_JUDGMENT";
@@ -453,6 +454,99 @@ function assertDecisionGrounding(
   }
 }
 
+/** Materializes a fixed, applicant-safe notice from the citations already accepted for this decision. */
+function persistReleasedApplicantExplanation(
+  dbPath: string,
+  input: {
+    application: ApplicationRow;
+    evaluation: EvaluationRow;
+    decisionId: string;
+    decision: Decision;
+    reasonCategory?: DecisionReason;
+    findingIds: string[];
+    humanAssessmentIds: string[];
+    actor: EmployerActor;
+  },
+) {
+  const findings = input.findingIds.length
+    ? queryFile<{
+        criterion_statement_snapshot: string;
+        criterion_disposition_snapshot: "MANDATORY" | "PREFERRED" | "INFORMATIONAL";
+        finding_origin: "DETERMINISTIC_RULE" | "MODEL";
+        assessment_state: "SATISFIED" | "NOT_SATISFIED" | "INSUFFICIENT_EVIDENCE" | "REQUIRES_HUMAN_JUDGMENT";
+      }>(
+        dbPath,
+        `SELECT criterion_statement_snapshot, criterion_disposition_snapshot, finding_origin, assessment_state
+         FROM criterion_findings WHERE evaluation_id = ? AND id IN (${input.findingIds.map(() => "?").join(", ")})`,
+        [input.evaluation.id, ...input.findingIds],
+      )
+    : [];
+  const humanAssessments = input.humanAssessmentIds.length
+    ? queryFile<{
+        statement: string;
+        disposition: "MANDATORY" | "PREFERRED" | "INFORMATIONAL";
+        kind: "HUMAN_JUDGMENT" | "OTHER";
+        assessment: "SATISFIED" | "NOT_SATISFIED" | "CANNOT_DETERMINE";
+      }>(
+        dbPath,
+        `SELECT criterion.statement, criterion.disposition,
+                CASE WHEN criterion.kind = 'HUMAN_JUDGMENT' THEN 'HUMAN_JUDGMENT' ELSE 'OTHER' END AS kind,
+                assessment.assessment
+         FROM human_assessments assessment
+         JOIN job_criteria criterion ON criterion.id = assessment.criterion_id
+         WHERE assessment.application_id = ? AND assessment.evaluation_id = ?
+           AND assessment.id IN (${input.humanAssessmentIds.map(() => "?").join(", ")})`,
+        [input.application.id, input.evaluation.id, ...input.humanAssessmentIds],
+      )
+    : [];
+  const explanation = buildApplicantExplanation({
+    decision: input.decision,
+    reasonCategory: input.reasonCategory,
+    findings: findings.map((finding) => ({
+      criterion: finding.criterion_statement_snapshot,
+      disposition: finding.criterion_disposition_snapshot,
+      origin: finding.finding_origin,
+      assessment: finding.assessment_state,
+    })),
+    humanAssessments: humanAssessments.map((assessment) => ({
+      criterion: assessment.statement,
+      disposition: assessment.disposition,
+      criterionKind: assessment.kind,
+      assessment: assessment.assessment,
+    })),
+  });
+  const id = randomUUID();
+  const releasedAt = timestamp();
+  runFile(
+    dbPath,
+    `INSERT INTO applicant_explanations (
+      id, application_id, evaluation_id, decision_id, criteria_set_id, body_json, rendered_text,
+      generated_at, released_at, released_by_user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      input.application.id,
+      input.evaluation.id,
+      input.decisionId,
+      input.application.criteria_set_id,
+      JSON.stringify(explanation),
+      renderApplicantExplanation(explanation),
+      releasedAt,
+      releasedAt,
+      input.actor.userId,
+    ],
+  );
+  audit(dbPath, {
+    eventType: "APPLICANT_EXPLANATION_RELEASED",
+    entityType: "APPLICANT_EXPLANATION",
+    entityId: id,
+    companyId: input.actor.companyId,
+    actorUserId: input.actor.userId,
+    metadata: { applicationId: input.application.id, decisionId: input.decisionId, evaluationId: input.evaluation.id },
+  });
+  return id;
+}
+
 export function recordEmployerDecision(
   dbPath: string,
   actor: EmployerActor,
@@ -549,11 +643,23 @@ export function recordEmployerDecision(
       "UPDATE local_applications SET current_decision_id = ?, disposition_state = ?, status = 'REVIEWED', updated_at = ? WHERE id = ?",
       [id, disposition, createdAt, application.id],
     );
+    const explanationId = evaluation
+      ? persistReleasedApplicantExplanation(dbPath, {
+          application,
+          evaluation,
+          decisionId: id,
+          decision: input.decision,
+          reasonCategory: input.reasonCategory,
+          findingIds,
+          humanAssessmentIds,
+          actor,
+        })
+      : null;
     const { notificationId } = enqueueNotification(dbPath, {
       recipientUserId: application.seeker_user_id,
       applicationId: application.id,
       type: "DECISION_AVAILABLE",
-      payload: { decisionId: id, applicationId: application.id },
+      payload: { decisionId: id, explanationId, applicationId: application.id },
     });
     runFile(
       dbPath,
@@ -570,6 +676,7 @@ export function recordEmployerDecision(
       metadata: {
         applicationId: application.id,
         evaluationId: evaluation?.id ?? null,
+        explanationId,
         decision: input.decision,
         reasonCategory: input.reasonCategory ?? null,
         notificationId,

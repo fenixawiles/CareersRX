@@ -129,6 +129,11 @@ describe("evaluation persistence", () => {
       .toEqual({ current_decision_id: decision.id, disposition_state: "NOT_ADVANCED" });
     expect(queryFile<{ type: string; recipient_user_id: string }>(dbPath, "SELECT type, recipient_user_id FROM notifications")[0])
       .toEqual({ type: "DECISION_AVAILABLE", recipient_user_id: "seeker" });
+    expect(queryFile<{ decision_id: string; released_at: string | null; rendered_text: string }>(dbPath, "SELECT decision_id, released_at, rendered_text FROM applicant_explanations")[0])
+      .toEqual(expect.objectContaining({ decision_id: decision.id, rendered_text: expect.stringContaining("mandatory requirement") }));
+    expect(() => runFile(dbPath, "UPDATE applicant_explanations SET rendered_text = ?", ["changed"])).toThrow(
+      "applicant explanations are immutable after release",
+    );
     expect(queryFile<{ state: string; channel: string }>(dbPath, "SELECT state, channel FROM notification_outbox")[0])
       .toEqual({ state: "PENDING", channel: "EMAIL" });
   });
