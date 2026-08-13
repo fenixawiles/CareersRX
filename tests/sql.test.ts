@@ -28,8 +28,70 @@ describe("SQLite transaction primitives", () => {
        )`,
     );
 
-    expect(migrations).toEqual([{ version: 1, name: "baseline" }]);
+    expect(migrations).toEqual([
+      { version: 1, name: "baseline" },
+      { version: 2, name: "integrity" },
+      { version: 3, name: "criteria" },
+      { version: 4, name: "application_lock" },
+    ]);
     expect(tables[0]?.count).toBe(17);
+  });
+
+  it("permits multi-organization membership and keeps published criteria immutable", () => {
+    const dbPath = temporaryDatabasePath();
+    runFile(
+      dbPath,
+      `INSERT INTO local_users (id, email, password_hash, first_name, last_name, full_name, role, is_admin, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["user", "member@example.test", "hash", "Member", "Example", "Member Example", "EMPLOYER", 0, "now", "now"],
+    );
+    for (const id of ["company-a", "company-b"]) {
+      runFile(
+        dbPath,
+        `INSERT INTO local_companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, id, id, "Member Example", "member@example.test", "APPROVED", "now", "now"],
+      );
+      runFile(
+        dbPath,
+        "INSERT INTO local_company_users (id, company_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
+        [`membership-${id}`, id, "user", "OWNER", "now"],
+      );
+    }
+    expect(queryFile<{ count: number }>(dbPath, "SELECT COUNT(*) AS count FROM local_company_users")[0]?.count).toBe(2);
+
+    runFile(
+      dbPath,
+      `INSERT INTO local_jobs (id, company_id, slug, title, category, job_type, shifts_json, city, state, zip, description,
+       requirements, benefits, show_salary, eeo_statement, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["job", "company-a", "job", "RN", "Nursing", "FULL_TIME", "[]", "Chicago", "IL", "", "Role", "", "", 0, "", "DRAFT", "now", "now"],
+    );
+    runFile(
+      dbPath,
+      `INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["set", "job", 1, "DRAFT", "STRUCTURED", "now"],
+    );
+    expect(() =>
+      runFile(
+        dbPath,
+        `INSERT INTO job_criteria (id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["invalid", "set", 1, "PREFERRED_QUALIFICATION", "MANDATORY", "EVIDENCE_MAPPING", "Nice to have", "Nice to have", "now"],
+      ),
+    ).toThrow();
+
+    runFile(
+      dbPath,
+      `INSERT INTO job_criteria (id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["criterion", "set", 1, "MINIMUM_QUALIFICATION", "MANDATORY", "EVIDENCE_MAPPING", "Experience", "Relevant experience", "now"],
+    );
+    runFile(dbPath, "UPDATE job_criteria_sets SET status = 'PUBLISHED' WHERE id = ?", ["set"]);
+    expect(() => runFile(dbPath, "UPDATE job_criteria SET label = ? WHERE id = ?", ["Changed", "criterion"])).toThrow(
+      "published criteria are immutable",
+    );
   });
 
   it("rolls back all writes when work throws", () => {

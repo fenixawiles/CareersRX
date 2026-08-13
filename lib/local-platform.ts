@@ -1,9 +1,10 @@
 import "server-only";
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import slugify from "slugify";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
+import { transactionFile } from "@/lib/db/sql";
 import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
 
 const dbPath = path.join(process.cwd(), "data", "careersrx-live-resume-sandbox.sqlite");
@@ -133,6 +134,20 @@ function parseJson<T>(value: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalize(object[key])}`)
+    .join(",")}}`;
+}
+
+function applicationSnapshotHash(profile: unknown, resume: unknown) {
+  return createHash("sha256").update(`${canonicalize(profile)}\n${canonicalize(resume)}`).digest("hex");
 }
 
 function cents(value: unknown) {
@@ -461,12 +476,13 @@ export function createJobForCompany(companyId: string, input: LocalJobInput) {
   const timestamp = now();
   const jobId = randomBytes(16).toString("hex");
   const slug = uniqueSlug("local_jobs", `${parsed.job.title}-${parsed.job.city}-${parsed.job.state}`);
-  runSql(`
-    INSERT INTO local_jobs (
+  transactionFile(dbPath, () => {
+    runSql(`
+      INSERT INTO local_jobs (
       id, company_id, slug, title, category, facility_type, job_type, shifts_json, city, state, zip,
       description, requirements, benefits, salary_min_cents, salary_max_cents, pay_type,
       show_salary, eeo_statement, status, published_at, expires_at, created_at, updated_at
-    ) VALUES (${[
+      ) VALUES (${[
       sqlString(jobId),
       sqlString(companyId),
       sqlString(slug),
@@ -491,8 +507,20 @@ export function createJobForCompany(companyId: string, input: LocalJobInput) {
       "NULL",
       sqlString(timestamp),
       sqlString(timestamp),
-    ].join(", ")})
-  `);
+      ].join(", ")})
+    `);
+    runSql(`
+      INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at)
+      VALUES (${[
+        sqlString(randomBytes(16).toString("hex")),
+        sqlString(jobId),
+        "1",
+        sqlString("DRAFT"),
+        sqlString("UNSTRUCTURED"),
+        sqlString(timestamp),
+      ].join(", ")})
+    `);
+  });
   return { ok: true as const, job: getJobForCompany(jobId, companyId)! };
 }
 
@@ -533,11 +561,25 @@ export function setJobStatusForCompany(jobId: string, companyId: string, status:
   if (!job) return null;
   const timestamp = now();
   const publishedAt = status === "ACTIVE" ? job.publishedAt?.toISOString() ?? timestamp : job.publishedAt?.toISOString() ?? null;
-  runSql(`
-    UPDATE local_jobs
-    SET status = ${sqlString(status)}, published_at = ${sqlString(publishedAt)}, updated_at = ${sqlString(timestamp)}
-    WHERE id = ${sqlString(jobId)} AND company_id = ${sqlString(companyId)}
-  `);
+  transactionFile(dbPath, () => {
+    if (status === "ACTIVE") {
+      const [draft] = querySql<Row>(
+        `SELECT id FROM job_criteria_sets WHERE job_id = ${sqlString(jobId)} AND status = 'DRAFT' LIMIT 1`,
+      );
+      if (draft?.id) {
+        runSql(`
+          UPDATE job_criteria_sets
+          SET status = 'PUBLISHED', published_at = ${sqlString(timestamp)}
+          WHERE id = ${sqlString(String(draft.id))}
+        `);
+      }
+    }
+    runSql(`
+      UPDATE local_jobs
+      SET status = ${sqlString(status)}, published_at = ${sqlString(publishedAt)}, updated_at = ${sqlString(timestamp)}
+      WHERE id = ${sqlString(jobId)} AND company_id = ${sqlString(companyId)}
+    `);
+  });
   return getJobForCompany(jobId, companyId);
 }
 
@@ -620,21 +662,43 @@ export function createApplication(input: {
   licenseConfirmed?: boolean;
 }) {
   initializeLocalPlatform();
-  const job = jobSelect(`j.id = ${sqlString(input.jobId)} AND j.status = ${sqlString("ACTIVE")}`, "j.created_at DESC")[0];
-  if (!job) return { ok: false as const, error: "This job is not accepting applications" };
-
-  const existing = querySql<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM local_applications WHERE job_id = ${sqlString(job.id)} AND seeker_user_id = ${sqlString(input.seekerUserId)}`,
-  )[0];
-  if (existing?.count) return { ok: false as const, error: "You already applied to this job" };
-
   const snapshot = getSandboxSnapshot(input.sandboxId);
   const timestamp = now();
   const id = randomBytes(16).toString("hex");
-  runSql(`
-    INSERT INTO local_applications (
+  const profileJson = JSON.stringify(snapshot.profile);
+  const resumeJson = JSON.stringify(snapshot.resume);
+  let failure: string | null = null;
+
+  transactionFile(dbPath, () => {
+    const job = jobSelect(`j.id = ${sqlString(input.jobId)} AND j.status = ${sqlString("ACTIVE")}`, "j.created_at DESC")[0];
+    if (!job) {
+      failure = "This job is not accepting applications";
+      return;
+    }
+    const existing = querySql<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM local_applications WHERE job_id = ${sqlString(job.id)} AND seeker_user_id = ${sqlString(input.seekerUserId)}`,
+    )[0];
+    if (existing?.count) {
+      failure = "You already applied to this job";
+      return;
+    }
+    const [criteriaSet] = querySql<Row>(`
+      SELECT id, authoring_state FROM job_criteria_sets
+      WHERE job_id = ${sqlString(job.id)} AND status = 'PUBLISHED'
+      LIMIT 1
+    `);
+    if (!criteriaSet?.id) {
+      failure = "This job is not ready to accept applications";
+      return;
+    }
+
+    const evaluationState = criteriaSet.authoring_state === "UNSTRUCTURED" ? "NOT_APPLICABLE" : "NOT_STARTED";
+    runSql(`
+      INSERT INTO local_applications (
       id, job_id, seeker_user_id, seeker_name, seeker_email, seeker_headline, seeker_location,
-      cover_letter, license_confirmed, profile_snapshot_json, resume_snapshot_json, status, created_at, updated_at
+      cover_letter, license_confirmed, profile_snapshot_json, resume_snapshot_json, criteria_set_id,
+      resume_revision_id, snapshot_hash, submitted_at, evaluation_state, disposition_state,
+      accommodation_state, accommodation_notice_shown_at, status, created_at, updated_at
     ) VALUES (${[
       sqlString(id),
       sqlString(job.id),
@@ -645,13 +709,51 @@ export function createApplication(input: {
       sqlString(snapshot.profile.location),
       sqlString(optionalText(input.coverLetter)),
       input.licenseConfirmed ? "1" : "0",
-      sqlString(JSON.stringify(snapshot.profile)),
-      sqlString(JSON.stringify(snapshot.resume)),
+      sqlString(profileJson),
+      sqlString(resumeJson),
+      sqlString(String(criteriaSet.id)),
+      "NULL",
+      sqlString(applicationSnapshotHash(snapshot.profile, snapshot.resume)),
+      sqlString(timestamp),
+      sqlString(evaluationState),
+      sqlString("SUBMITTED"),
+      sqlString("NONE"),
+      "NULL",
       sqlString("PENDING"),
       sqlString(timestamp),
       sqlString(timestamp),
     ].join(", ")})
-  `);
+    `);
+    runSql(`
+      INSERT INTO application_transitions (id, application_id, from_state, to_state, actor_kind, actor_user_id, rule_criterion_id, rationale, created_at)
+      VALUES (${[
+        sqlString(randomBytes(16).toString("hex")),
+        sqlString(id),
+        "NULL",
+        sqlString("SUBMITTED"),
+        sqlString("SYSTEM"),
+        "NULL",
+        "NULL",
+        sqlString("Application submitted"),
+        sqlString(timestamp),
+      ].join(", ")})
+    `);
+    runSql(`
+      INSERT INTO audit_events (id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at)
+      VALUES (${[
+        sqlString(randomBytes(16).toString("hex")),
+        sqlString("APPLICATION_SUBMITTED"),
+        sqlString("SYSTEM"),
+        "NULL",
+        sqlString("APPLICATION"),
+        sqlString(id),
+        sqlString(job.companyId),
+        sqlString(JSON.stringify({ criteriaSetId: String(criteriaSet.id), snapshotHash: applicationSnapshotHash(snapshot.profile, snapshot.resume) })),
+        sqlString(timestamp),
+      ].join(", ")})
+    `);
+  });
+  if (failure) return { ok: false as const, error: failure };
   return { ok: true as const, application: getApplication(id)! };
 }
 
