@@ -13,7 +13,7 @@ export async function GET() {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
   if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
-  return NextResponse.json({ jobs: listSavedJobsForSeeker(user.id) });
+  return NextResponse.json({ jobs: await listSavedJobsForSeeker(user.id) });
 }
 
 export async function POST(request: Request) {
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.jobId !== "string") {
     return NextResponse.json({ error: "Job is required" }, { status: 400 });
   }
-  return NextResponse.json(saveJobForSeeker(user.id, body.jobId));
+  return NextResponse.json(await saveJobForSeeker(user.id, body.jobId));
 }
 
 export async function DELETE(request: Request) {
@@ -35,5 +35,5 @@ export async function DELETE(request: Request) {
   if (!body || typeof body.jobId !== "string") {
     return NextResponse.json({ error: "Job is required" }, { status: 400 });
   }
-  return NextResponse.json(removeSavedJobForSeeker(user.id, body.jobId));
+  return NextResponse.json(await removeSavedJobForSeeker(user.id, body.jobId));
 }

@@ -1,126 +1,126 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { queryFile, runFile, transactionFile } from "../lib/db/sql";
+import { query, queryOne, run, tx } from "../lib/db/sql";
+import { freshDatabase } from "./harness";
 
-function temporaryDatabasePath() {
-  return join(mkdtempSync(join(tmpdir(), "careersrx-sql-test-")), "test.sqlite");
-}
-
-describe("SQLite transaction primitives", () => {
-  it("creates and records the full legacy baseline for a fresh database", () => {
-    const dbPath = temporaryDatabasePath();
-    const migrations = queryFile<{ version: number; name: string }>(
-      dbPath,
-      "SELECT version, name FROM schema_migrations",
+describe("Postgres data layer", () => {
+  it("applies the full migration set to a fresh schema", async () => {
+    await freshDatabase();
+    const migrations = await query<{ version: number; name: string }>(
+      "SELECT version, name FROM schema_migrations ORDER BY version",
     );
-    const tables = queryFile<{ count: number }>(
-      dbPath,
-      `SELECT COUNT(*) AS count
-       FROM sqlite_master
-       WHERE type = 'table' AND name IN (
-         'local_users', 'local_sessions', 'local_companies', 'local_company_users', 'local_jobs',
-         'local_applications', 'local_saved_jobs', 'sandbox_state', 'sandbox_versions',
-         'sandbox_named_resume_versions', 'sandbox_resume_revisions', 'sandbox_active_resume_version',
-         'sandbox_proposals', 'sandbox_audit', 'sandbox_ai_interactions', 'sandbox_resume_imports',
-         'audit_events'
+    expect(migrations).toEqual([
+      { version: 1, name: "platform" },
+      { version: 2, name: "resume" },
+      { version: 3, name: "criteria" },
+      { version: 4, name: "applications" },
+      { version: 5, name: "evaluation" },
+      { version: 6, name: "notifications" },
+      { version: 7, name: "retention" },
+    ]);
+    const tables = await queryOne<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM information_schema.tables
+       WHERE table_schema = current_schema() AND table_name IN (
+         'users', 'sessions', 'tokens', 'companies', 'company_users', 'jobs', 'applications',
+         'saved_jobs', 'seeker_profiles', 'resumes', 'resume_sections', 'job_criteria_sets',
+         'job_criteria', 'application_evaluations', 'criterion_findings', 'employer_decisions',
+         'applicant_explanations', 'audit_events', 'notifications', 'notification_outbox'
        )`,
     );
-
-    expect(migrations).toEqual([
-      { version: 1, name: "baseline" },
-      { version: 2, name: "integrity" },
-      { version: 3, name: "criteria" },
-      { version: 4, name: "application_lock" },
-      { version: 5, name: "evaluation" },
-      { version: 6, name: "evaluation_integrity" },
-      { version: 7, name: "notifications" },
-      { version: 8, name: "explanation_integrity" },
-      { version: 9, name: "retention" },
-      { version: 10, name: "accommodation_enforcement" },
-    ]);
-    expect(tables[0]?.count).toBe(17);
+    expect(Number(tables?.count)).toBe(20);
   });
 
-  it("permits multi-organization membership and keeps published criteria immutable", () => {
-    const dbPath = temporaryDatabasePath();
-    runFile(
-      dbPath,
-      `INSERT INTO local_users (id, email, password_hash, first_name, last_name, full_name, role, is_admin, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["user", "member@example.test", "hash", "Member", "Example", "Member Example", "EMPLOYER", 0, "now", "now"],
+  it("permits multi-organization membership and keeps published criteria immutable", async () => {
+    await freshDatabase();
+    const now = new Date().toISOString();
+    await run(
+      `INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, is_admin, created_at, updated_at)
+       VALUES ('user', 'user@example.com', 'hash', 'A', 'B', 'A B', 'EMPLOYER', FALSE, ?, ?)`,
+      [now, now],
     );
-    for (const id of ["company-a", "company-b"]) {
-      runFile(
-        dbPath,
-        `INSERT INTO local_companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, id, id, "Member Example", "member@example.test", "APPROVED", "now", "now"],
+    for (const company of ["first", "second"]) {
+      await run(
+        `INSERT INTO companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at)
+         VALUES (?, ?, ?, 'A', 'user@example.com', 'APPROVED', ?, ?)`,
+        [company, company, company, now, now],
       );
-      runFile(
-        dbPath,
-        "INSERT INTO local_company_users (id, company_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
-        [`membership-${id}`, id, "user", "OWNER", "now"],
+      await run(
+        "INSERT INTO company_users (id, company_id, user_id, role, created_at) VALUES (?, ?, 'user', 'OWNER', ?)",
+        [`membership-${company}`, company, now],
       );
     }
-    expect(queryFile<{ count: number }>(dbPath, "SELECT COUNT(*) AS count FROM local_company_users")[0]?.count).toBe(2);
-
-    runFile(
-      dbPath,
-      `INSERT INTO local_jobs (id, company_id, slug, title, category, job_type, shifts_json, city, state, zip, description,
-       requirements, benefits, show_salary, eeo_statement, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["job", "company-a", "job", "RN", "Nursing", "FULL_TIME", "[]", "Chicago", "IL", "", "Role", "", "", 0, "", "DRAFT", "now", "now"],
+    const memberships = await queryOne<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM company_users WHERE user_id = 'user'",
     );
-    runFile(
-      dbPath,
+    expect(Number(memberships?.count)).toBe(2);
+
+    await run(
+      `INSERT INTO jobs (id, company_id, slug, title, category, job_type, shifts_json, city, state, zip, description,
+        requirements, benefits, show_salary, eeo_statement, status, created_at, updated_at)
+       VALUES ('job', 'first', 'job', 'RN', 'Nursing', 'FULL_TIME', '["DAY"]', 'Tampa', 'FL', '', 'd', '', '', TRUE, 'eeo', 'ACTIVE', ?, ?)`,
+      [now, now],
+    );
+    await run(
       `INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      ["set", "job", 1, "DRAFT", "STRUCTURED", "now"],
+       VALUES ('set', 'job', 1, 'DRAFT', 'STRUCTURED', ?)`,
+      [now],
     );
-    expect(() =>
-      runFile(
-        dbPath,
-        `INSERT INTO job_criteria (id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ["invalid", "set", 1, "PREFERRED_QUALIFICATION", "MANDATORY", "EVIDENCE_MAPPING", "Nice to have", "Nice to have", "now"],
-      ),
-    ).toThrow();
-
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO job_criteria (id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["criterion", "set", 1, "MINIMUM_QUALIFICATION", "MANDATORY", "EVIDENCE_MAPPING", "Experience", "Relevant experience", "now"],
+       VALUES ('criterion', 'set', 1, 'MINIMUM_QUALIFICATION', 'MANDATORY', 'DETERMINISTIC', 'License', 'Holds a license', ?)`,
+      [now],
     );
-    runFile(dbPath, "UPDATE job_criteria_sets SET status = 'PUBLISHED' WHERE id = ?", ["set"]);
-    expect(() => runFile(dbPath, "UPDATE job_criteria SET label = ? WHERE id = ?", ["Changed", "criterion"])).toThrow(
+    await run("UPDATE job_criteria_sets SET status = 'PUBLISHED', published_at = ? WHERE id = 'set'", [now]);
+
+    await expect(run("UPDATE job_criteria SET label = 'Changed' WHERE id = 'criterion'")).rejects.toThrow(
       "published criteria are immutable",
     );
+    await expect(
+      run(
+        `INSERT INTO job_criteria (id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement, created_at)
+         VALUES ('late', 'set', 2, 'MINIMUM_QUALIFICATION', 'MANDATORY', 'DETERMINISTIC', 'Late', 'Added after publish', ?)`,
+        [new Date().toISOString()],
+      ),
+    ).rejects.toThrow("published criteria are immutable");
   });
 
-  it("rolls back all writes when work throws", () => {
-    const dbPath = temporaryDatabasePath();
-    runFile(dbPath, "CREATE TABLE entries (value TEXT NOT NULL)");
-
-    expect(() =>
-      transactionFile(dbPath, () => {
-        runFile(dbPath, "INSERT INTO entries (value) VALUES (?)", ["first"]);
-        throw new Error("abort");
+  it("rolls back all writes when work throws", async () => {
+    await freshDatabase();
+    const now = new Date().toISOString();
+    await expect(
+      tx(async () => {
+        await run(
+          `INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at)
+           VALUES ('rollback', 'rollback@example.com', 'hash', 'A', 'B', 'A B', 'SEEKER', ?, ?)`,
+          [now, now],
+        );
+        throw new Error("boom");
       }),
-    ).toThrow("abort");
-
-    expect(queryFile<{ count: number }>(dbPath, "SELECT COUNT(*) AS count FROM entries")[0]?.count).toBe(0);
+    ).rejects.toThrow("boom");
+    const user = await queryOne<{ id: string }>("SELECT id FROM users WHERE id = 'rollback'");
+    expect(user).toBeNull();
   });
 
-  it("rejects asynchronous transaction callbacks before commit", () => {
-    const dbPath = temporaryDatabasePath();
-    runFile(dbPath, "CREATE TABLE entries (value TEXT NOT NULL)");
-
-    expect(() => transactionFile(dbPath, () => Promise.resolve("not permitted"))).toThrow(
-      "SQLite transaction callbacks must be synchronous.",
-    );
-    expect(queryFile<{ count: number }>(dbPath, "SELECT COUNT(*) AS count FROM entries")[0]?.count).toBe(0);
+  it("nests transactions with savepoints so an inner failure does not lose outer work", async () => {
+    await freshDatabase();
+    const now = new Date().toISOString();
+    await tx(async () => {
+      await run(
+        `INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at)
+         VALUES ('outer', 'outer@example.com', 'hash', 'A', 'B', 'A B', 'SEEKER', ?, ?)`,
+        [now, now],
+      );
+      await expect(
+        tx(async () => {
+          await run(
+            `INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at)
+             VALUES ('inner', 'inner@example.com', 'hash', 'A', 'B', 'A B', 'SEEKER', ?, ?)`,
+            [now, now],
+          );
+          throw new Error("inner boom");
+        }),
+      ).rejects.toThrow("inner boom");
+    });
+    expect(await queryOne("SELECT id FROM users WHERE id = 'outer'")).not.toBeNull();
+    expect(await queryOne("SELECT id FROM users WHERE id = 'inner'")).toBeNull();
   });
 });

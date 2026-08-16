@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { decideSandboxProposal } from "@/lib/sqlite-sandbox";
+import { decideSandboxProposal } from "@/lib/resume/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,5 +23,5 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  return NextResponse.json(decideSandboxProposal(id, decision, sandboxIdForUser(user.id)));
+  return NextResponse.json(await decideSandboxProposal(id, decision, sandboxIdForUser(user.id)));
 }

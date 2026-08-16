@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { analyzeSandboxResume } from "@/lib/sqlite-sandbox";
+import { analyzeSandboxResume } from "@/lib/resume/store";
 import type { SandboxResumeSection } from "@/lib/sandbox-types";
 
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => null)) as { sectionId?: unknown } | null;
   return NextResponse.json(
-    analyzeSandboxResume(
+    await analyzeSandboxResume(
       isResumeSectionId(body?.sectionId) ? body.sectionId : undefined,
       sandboxIdForUser(user.id),
     ),

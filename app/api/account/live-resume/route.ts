@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { getSandboxSnapshot, resetSandbox, saveSandboxDraft } from "@/lib/sqlite-sandbox";
+import { getSandboxSnapshot, resetSandbox, saveSandboxDraft } from "@/lib/resume/store";
 import type { SandboxResumeSection } from "@/lib/sandbox-types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function getSeekerSandboxId() {
+type SeekerAuth =
+  | { ok: false; error: string; status: 401 | 403 }
+  | { ok: true; sandboxId: string };
+
+async function getSeekerSandboxId(): Promise<SeekerAuth> {
   const user = await getCurrentLocalUser();
-  if (!user) return { error: "Log in required", status: 401 as const };
-  if (user.role !== "SEEKER") return { error: "Job seeker account required", status: 403 as const };
-  return { sandboxId: sandboxIdForUser(user.id) };
+  if (!user) return { ok: false, error: "Log in required", status: 401 };
+  if (user.role !== "SEEKER") return { ok: false, error: "Job seeker account required", status: 403 };
+  return { ok: true, sandboxId: sandboxIdForUser(user.id) };
 }
 
 function authError(auth: { error: string; status: 401 | 403 }) {
@@ -29,13 +33,13 @@ function isResumeSectionId(value: unknown): value is SandboxResumeSection["id"] 
 
 export async function GET() {
   const auth = await getSeekerSandboxId();
-  if (!("sandboxId" in auth)) return authError(auth);
-  return NextResponse.json(getSandboxSnapshot(auth.sandboxId));
+  if (!auth.ok) return authError(auth);
+  return NextResponse.json(await getSandboxSnapshot(auth.sandboxId));
 }
 
 export async function PATCH(request: Request) {
   const auth = await getSeekerSandboxId();
-  if (!("sandboxId" in auth)) return authError(auth);
+  if (!auth.ok) return authError(auth);
 
   const body = (await request.json().catch(() => null)) as {
     sections?: unknown;
@@ -61,7 +65,7 @@ export async function PATCH(request: Request) {
   );
 
   return NextResponse.json(
-    saveSandboxDraft(
+    await saveSandboxDraft(
       sections,
       typeof body.targetRole === "string" ? body.targetRole : "",
       typeof body.title === "string" ? body.title : undefined,
@@ -74,6 +78,6 @@ export async function PATCH(request: Request) {
 
 export async function DELETE() {
   const auth = await getSeekerSandboxId();
-  if (!("sandboxId" in auth)) return authError(auth);
-  return NextResponse.json(resetSandbox(auth.sandboxId));
+  if (!auth.ok) return authError(auth);
+  return NextResponse.json(await resetSandbox(auth.sandboxId));
 }

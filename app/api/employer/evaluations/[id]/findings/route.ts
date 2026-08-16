@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withApiHandler } from "@/lib/evaluation/http";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 import { recordEvaluationFindings } from "@/lib/evaluation/persistence";
 
 export const runtime = "nodejs";
@@ -33,6 +32,6 @@ export async function POST(request: Request, context: RouteContext) {
     const parsed = requestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return NextResponse.json({ error: "Invalid findings request" }, { status: 400 });
     const { id } = await routeContext.params;
-    return NextResponse.json({ result: recordEvaluationFindings(evaluationDbPath(), actor, id, parsed.data.findings) }, { status: 201 });
+    return NextResponse.json({ result: await recordEvaluationFindings(actor, id, parsed.data.findings) }, { status: 201 });
   });
 }

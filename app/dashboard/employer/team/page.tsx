@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 export default async function TeamPage() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/team");
-  const company = getCompanyForUser(user.id);
+  const company = await getCompanyForUser(user.id);
   if (!company) redirect("/register/employer");
 
   return (

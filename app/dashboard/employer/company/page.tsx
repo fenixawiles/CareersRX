@@ -9,7 +9,7 @@ import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 export default async function CompanyPage() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/company");
-  const company = getCompanyForUser(user.id);
+  const company = await getCompanyForUser(user.id);
   if (!company) redirect("/register/employer");
 
   return (

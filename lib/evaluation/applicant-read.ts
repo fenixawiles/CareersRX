@@ -1,6 +1,6 @@
 import "server-only";
 
-import { queryOneFile } from "@/lib/db/sql";
+import { queryOne } from "@/lib/db/sql";
 
 export type ApplicantApplicationDetail = {
   id: string;
@@ -30,17 +30,16 @@ export type ReleasedApplicantExplanation = {
   releasedAt: string;
 };
 
-export function getApplicantApplicationDetail(dbPath: string, seekerUserId: string, applicationId: string): ApplicantApplicationDetail | null {
-  const row = queryOneFile<{
+export async function getApplicantApplicationDetail(seekerUserId: string, applicationId: string): Promise<ApplicantApplicationDetail | null> {
+  const row = await queryOne<{
     id: string; job_id: string; submitted_at: string; evaluation_state: string; disposition_state: string; status: string;
     current_decision_id: string | null; criteria_set_id: string; version: number; criteria_status: "PUBLISHED" | "SUPERSEDED";
     authoring_state: "STRUCTURED" | "UNSTRUCTURED"; published_at: string | null;
   }>(
-    dbPath,
     `SELECT application.id, application.job_id, application.submitted_at, application.evaluation_state,
             application.disposition_state, application.status, application.current_decision_id, application.criteria_set_id,
             criteria_set.version, criteria_set.status AS criteria_status, criteria_set.authoring_state, criteria_set.published_at
-     FROM local_applications application
+     FROM applications application
      JOIN job_criteria_sets criteria_set ON criteria_set.id = application.criteria_set_id
      WHERE application.id = ? AND application.seeker_user_id = ?`,
     [applicationId, seekerUserId],
@@ -64,12 +63,11 @@ export function getApplicantApplicationDetail(dbPath: string, seekerUserId: stri
   };
 }
 
-export function getReleasedApplicantExplanation(dbPath: string, seekerUserId: string, applicationId: string): ReleasedApplicantExplanation | null {
-  const row = queryOneFile<{
+export async function getReleasedApplicantExplanation(seekerUserId: string, applicationId: string): Promise<ReleasedApplicantExplanation | null> {
+  const row = await queryOne<{
     id: string; application_id: string; decision_id: string | null; criteria_set_id: string; body_json: string;
     rendered_text: string; generated_at: string; released_at: string;
   }>(
-    dbPath,
     `SELECT id, application_id, decision_id, criteria_set_id, body_json, rendered_text, generated_at, released_at
      FROM applicant_explanations
      WHERE application_id = ? AND applicant_user_id = ? AND released_at IS NOT NULL

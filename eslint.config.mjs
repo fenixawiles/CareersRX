@@ -13,6 +13,21 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    // The data layer is async Postgres; a missed await on a service call returns a Promise that
+    // serializes as {} and silently skips the write. Catch that class of bug at lint time.
+    files: ["app/**/*.ts", "app/**/*.tsx", "lib/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/await-thenable": "error",
+    },
+  },
 ]);
 
 export default eslintConfig;

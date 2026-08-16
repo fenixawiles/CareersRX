@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { queryFile, queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
+import { query, queryOne, run, tx } from "@/lib/db/sql";
 import { assessmentAfterEvidence, verifyEvidence, type EvidenceCandidate } from "@/lib/evaluation/evidence-verify";
 import { buildApplicantExplanation, renderApplicantExplanation } from "@/lib/evaluation/explain";
 import { enqueueNotification } from "@/lib/notify/enqueue";
@@ -104,37 +104,33 @@ function timestamp() {
   return new Date().toISOString();
 }
 
-function audit(
-  dbPath: string,
-  input: { eventType: string; entityType: string; entityId: string; companyId: string; actorUserId: string; metadata: Record<string, unknown> },
+async function audit(
+    input: { eventType: string; entityType: string; entityId: string; companyId: string; actorUserId: string; metadata: Record<string, unknown> },
 ) {
-  runFile(
-    dbPath,
+  await run(
     `INSERT INTO audit_events (id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at)
      VALUES (?, ?, 'HUMAN', ?, ?, ?, ?, ?, ?)`,
     [randomUUID(), input.eventType, input.actorUserId, input.entityType, input.entityId, input.companyId, JSON.stringify(input.metadata), timestamp()],
   );
 }
 
-function activeActor(dbPath: string, actor: EmployerActor) {
-  const membership = queryOneFile<{ id: string }>(
-    dbPath,
-    `SELECT id FROM local_company_users
+async function activeActor(actor: EmployerActor) {
+  const membership = await queryOne<{ id: string }>(
+    `SELECT id FROM company_users
      WHERE id = ? AND company_id = ? AND user_id = ? AND revoked_at IS NULL`,
     [actor.companyUserId, actor.companyId, actor.userId],
   );
   if (!membership) throw new EvaluationPersistenceError("ACCESS_DENIED", "An active organization membership is required.");
 }
 
-function applicationForActor(dbPath: string, actor: EmployerActor, applicationId: string): ApplicationRow {
-  activeActor(dbPath, actor);
-  const application = queryOneFile<ApplicationRow>(
-    dbPath,
+async function applicationForActor(actor: EmployerActor, applicationId: string): Promise<ApplicationRow> {
+  await activeActor(actor);
+  const application = await queryOne<ApplicationRow>(
     `SELECT application.id, job.company_id, application.seeker_user_id, application.criteria_set_id, application.evaluation_state,
             application.disposition_state, application.current_decision_id, application.profile_snapshot_json,
             application.resume_snapshot_json, application.job_id
-     FROM local_applications application
-     JOIN local_jobs job ON job.id = application.job_id
+     FROM applications application
+     JOIN jobs job ON job.id = application.job_id
      WHERE application.id = ? AND job.company_id = ?`,
     [applicationId, actor.companyId],
   );
@@ -142,14 +138,13 @@ function applicationForActor(dbPath: string, actor: EmployerActor, applicationId
   return application;
 }
 
-function evaluationForActor(dbPath: string, actor: EmployerActor, evaluationId: string): EvaluationRow {
-  activeActor(dbPath, actor);
-  const evaluation = queryOneFile<EvaluationRow>(
-    dbPath,
+async function evaluationForActor(actor: EmployerActor, evaluationId: string): Promise<EvaluationRow> {
+  await activeActor(actor);
+  const evaluation = await queryOne<EvaluationRow>(
     `SELECT evaluation.id, evaluation.application_id, evaluation.criteria_set_id, evaluation.state, evaluation.locked_by_decision_id
      FROM application_evaluations evaluation
-     JOIN local_applications application ON application.id = evaluation.application_id
-     JOIN local_jobs job ON job.id = application.job_id
+     JOIN applications application ON application.id = evaluation.application_id
+     JOIN jobs job ON job.id = application.job_id
      WHERE evaluation.id = ? AND job.company_id = ?`,
     [evaluationId, actor.companyId],
   );
@@ -157,11 +152,10 @@ function evaluationForActor(dbPath: string, actor: EmployerActor, evaluationId: 
   return evaluation;
 }
 
-function criteriaForEvaluation(dbPath: string, evaluation: EvaluationRow, criterionIds: string[]) {
+async function criteriaForEvaluation(evaluation: EvaluationRow, criterionIds: string[]) {
   if (criterionIds.length === 0) return new Map<string, CriterionRow>();
   const placeholders = criterionIds.map(() => "?").join(", ");
-  const rows = queryFile<CriterionRow>(
-    dbPath,
+  const rows = await query<CriterionRow>(
     `SELECT id, kind, disposition, label, statement, rule_template_id, requires_human_review, auto_enforceable
      FROM job_criteria WHERE criteria_set_id = ? AND id IN (${placeholders})`,
     [evaluation.criteria_set_id, ...criterionIds],
@@ -183,11 +177,10 @@ function parseSnapshot(application: ApplicationRow) {
   }
 }
 
-export function startEvaluationRun(dbPath: string, actor: EmployerActor, input: StartEvaluationInput) {
-  return transactionFile(dbPath, () => {
-    const application = applicationForActor(dbPath, actor, input.applicationId);
-    const criteriaSet = queryOneFile<{ status: string; authoring_state: string }>(
-      dbPath,
+export async function startEvaluationRun(actor: EmployerActor, input: StartEvaluationInput) {
+  return tx(async () => {
+    const application = await applicationForActor(actor, input.applicationId);
+    const criteriaSet = await queryOne<{ status: string; authoring_state: string }>(
       "SELECT status, authoring_state FROM job_criteria_sets WHERE id = ?",
       [application.criteria_set_id],
     );
@@ -197,24 +190,20 @@ export function startEvaluationRun(dbPath: string, actor: EmployerActor, input: 
     if (!["NOT_STARTED", "FAILED"].includes(application.evaluation_state)) {
       throw new EvaluationPersistenceError("INVALID_STATE", "This application cannot start another evaluation in its current state.");
     }
-    const openRun = queryOneFile<{ id: string }>(
-      dbPath,
+    const openRun = await queryOne<{ id: string }>(
       "SELECT id FROM application_evaluations WHERE application_id = ? AND state = 'IN_PROGRESS'",
       [application.id],
     );
     if (openRun) throw new EvaluationPersistenceError("INVALID_STATE", "An evaluation is already in progress for this application.");
 
-    const runNumber = Number(
-      queryOneFile<{ run_number: number }>(
-        dbPath,
-        "SELECT COALESCE(MAX(run_number), 0) + 1 AS run_number FROM application_evaluations WHERE application_id = ?",
-        [application.id],
-      )?.run_number ?? 1,
+    const runRow = await queryOne<{ run_number: number }>(
+      "SELECT COALESCE(MAX(run_number), 0) + 1 AS run_number FROM application_evaluations WHERE application_id = ?",
+      [application.id],
     );
+    const runNumber = Number(runRow?.run_number ?? 1);
     const id = randomUUID();
     const startedAt = timestamp();
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO application_evaluations (
         id, application_id, criteria_set_id, run_number, state, evaluator_kind, model_name, model_version,
         prompt_version, schema_version, started_at
@@ -232,8 +221,8 @@ export function startEvaluationRun(dbPath: string, actor: EmployerActor, input: 
         startedAt,
       ],
     );
-    runFile(dbPath, "UPDATE local_applications SET evaluation_state = 'IN_PROGRESS', updated_at = ? WHERE id = ?", [startedAt, application.id]);
-    audit(dbPath, {
+    await run("UPDATE applications SET evaluation_state = 'IN_PROGRESS', updated_at = ? WHERE id = ?", [startedAt, application.id]);
+    await audit({
       eventType: "EVALUATION_STARTED",
       entityType: "APPLICATION_EVALUATION",
       entityId: id,
@@ -245,23 +234,22 @@ export function startEvaluationRun(dbPath: string, actor: EmployerActor, input: 
   });
 }
 
-export function recordEvaluationFindings(
-  dbPath: string,
-  actor: EmployerActor,
+export async function recordEvaluationFindings(
+    actor: EmployerActor,
   evaluationId: string,
   inputs: EvaluationFindingInput[],
 ) {
-  return transactionFile(dbPath, () => {
-    const evaluation = evaluationForActor(dbPath, actor, evaluationId);
+  return tx(async () => {
+    const evaluation = await evaluationForActor(actor, evaluationId);
     if (evaluation.state !== "IN_PROGRESS" || evaluation.locked_by_decision_id) {
       throw new EvaluationPersistenceError("INVALID_STATE", "Findings can only be added to an unlocked in-progress evaluation.");
     }
-    const application = applicationForActor(dbPath, actor, evaluation.application_id);
+    const application = await applicationForActor(actor, evaluation.application_id);
     const ids = inputs.map((input) => input.criterionId);
     if (new Set(ids).size !== ids.length) {
       throw new EvaluationPersistenceError("INVALID_INPUT", "Only one finding may be recorded per criterion in an evaluation run.");
     }
-    const criteria = criteriaForEvaluation(dbPath, evaluation, ids);
+    const criteria = await criteriaForEvaluation(evaluation, ids);
     const snapshot = parseSnapshot(application);
     const findingIds: string[] = [];
 
@@ -289,8 +277,7 @@ export function recordEvaluationFindings(
           : input.assessment;
       const findingId = randomUUID();
       const createdAt = timestamp();
-      runFile(
-        dbPath,
+      await run(
         `INSERT INTO criterion_findings (
           id, evaluation_id, criterion_id, criterion_statement_snapshot, criterion_kind_snapshot,
           criterion_disposition_snapshot, finding_origin, assessment_state, confidence, reason_code,
@@ -314,8 +301,7 @@ export function recordEvaluationFindings(
         ],
       );
       for (const evidence of verifiedEvidence) {
-        runFile(
-          dbPath,
+        await run(
           `INSERT INTO criterion_evidence (id, finding_id, snapshot_field, excerpt, char_start, char_end, claim_polarity, claim_type, note)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
@@ -331,7 +317,7 @@ export function recordEvaluationFindings(
           ],
         );
         if (evidence.protectedContentAdmittedUnderTemplate) {
-          audit(dbPath, {
+          await audit({
             eventType: "PROTECTED_EVIDENCE_ADMITTED_UNDER_TEMPLATE",
             entityType: "CRITERION_EVIDENCE",
             entityId: findingId,
@@ -347,13 +333,12 @@ export function recordEvaluationFindings(
   });
 }
 
-export function completeEvaluationRun(
-  dbPath: string,
-  actor: EmployerActor,
+export async function completeEvaluationRun(
+    actor: EmployerActor,
   input: { evaluationId: string; state: EvaluationState; errorCode?: string; errorDetail?: string },
 ) {
-  return transactionFile(dbPath, () => {
-    const evaluation = evaluationForActor(dbPath, actor, input.evaluationId);
+  return tx(async () => {
+    const evaluation = await evaluationForActor(actor, input.evaluationId);
     if (evaluation.state !== "IN_PROGRESS" || evaluation.locked_by_decision_id) {
       throw new EvaluationPersistenceError("INVALID_STATE", "Only an unlocked in-progress evaluation can be finalized.");
     }
@@ -361,17 +346,15 @@ export function completeEvaluationRun(
       throw new EvaluationPersistenceError("INVALID_INPUT", "A failed evaluation must record an error code.");
     }
     const completedAt = timestamp();
-    runFile(
-      dbPath,
+    await run(
       "UPDATE application_evaluations SET state = ?, completed_at = ?, error_code = ?, error_detail = ? WHERE id = ?",
       [input.state, completedAt, input.errorCode ?? null, input.errorDetail ?? null, evaluation.id],
     );
-    runFile(
-      dbPath,
-      "UPDATE local_applications SET evaluation_state = ?, updated_at = ? WHERE id = ?",
+    await run(
+      "UPDATE applications SET evaluation_state = ?, updated_at = ? WHERE id = ?",
       [input.state, completedAt, evaluation.application_id],
     );
-    audit(dbPath, {
+    await audit({
       eventType: "EVALUATION_FINALIZED",
       entityType: "APPLICATION_EVALUATION",
       entityId: evaluation.id,
@@ -383,14 +366,12 @@ export function completeEvaluationRun(
   });
 }
 
-function assertDecisionGrounding(
-  dbPath: string,
-  input: { application: ApplicationRow; evaluation: EvaluationRow | null; reason: DecisionReason; findingIds: string[]; humanAssessmentIds: string[]; hiringRoundId?: string },
+async function assertDecisionGrounding(
+    input: { application: ApplicationRow; evaluation: EvaluationRow | null; reason: DecisionReason; findingIds: string[]; humanAssessmentIds: string[]; hiringRoundId?: string },
 ) {
   if (input.reason === "MANDATORY_CRITERION_NOT_MET") {
     const supported = input.findingIds.length
-      ? queryOneFile<{ count: number }>(
-          dbPath,
+      ? await queryOne<{ count: number }>(
           `SELECT COUNT(*) AS count FROM criterion_findings
            WHERE id IN (${input.findingIds.map(() => "?").join(", ")})
              AND evaluation_id = ? AND assessment_state = 'NOT_SATISFIED'
@@ -402,8 +383,7 @@ function assertDecisionGrounding(
   }
   if (input.reason === "EVIDENCE_INSUFFICIENT_AFTER_REVIEW") {
     const insufficient = input.findingIds.length
-      ? queryOneFile<{ count: number }>(
-          dbPath,
+      ? await queryOne<{ count: number }>(
           `SELECT COUNT(*) AS count FROM criterion_findings
            WHERE id IN (${input.findingIds.map(() => "?").join(", ")})
              AND evaluation_id = ? AND assessment_state = 'INSUFFICIENT_EVIDENCE'
@@ -412,8 +392,7 @@ function assertDecisionGrounding(
         )
       : null;
     const reviewed = input.humanAssessmentIds.length
-      ? queryOneFile<{ count: number }>(
-          dbPath,
+      ? await queryOne<{ count: number }>(
           `SELECT COUNT(*) AS count FROM human_assessments
            WHERE id IN (${input.humanAssessmentIds.map(() => "?").join(", ")})
              AND application_id = ? AND evaluation_id = ? AND assessment = 'CANNOT_DETERMINE'`,
@@ -426,8 +405,7 @@ function assertDecisionGrounding(
   }
   if (input.reason === "HUMAN_JUDGMENT_CRITERION_NOT_MET") {
     const supported = input.humanAssessmentIds.length
-      ? queryOneFile<{ count: number }>(
-          dbPath,
+      ? await queryOne<{ count: number }>(
           `SELECT COUNT(*) AS count FROM human_assessments assessment
            JOIN job_criteria criterion ON criterion.id = assessment.criterion_id
            WHERE assessment.id IN (${input.humanAssessmentIds.map(() => "?").join(", ")})
@@ -444,8 +422,7 @@ function assertDecisionGrounding(
   }
   if (input.reason === "STRONGER_CANDIDATE_POOL") {
     const round = input.hiringRoundId
-      ? queryOneFile<{ id: string }>(
-          dbPath,
+      ? await queryOne<{ id: string }>(
           "SELECT id FROM hiring_rounds WHERE id = ? AND job_id = ? AND criteria_set_id = ?",
           [input.hiringRoundId, input.application.job_id, input.application.criteria_set_id],
         )
@@ -455,9 +432,8 @@ function assertDecisionGrounding(
 }
 
 /** Materializes a fixed, applicant-safe notice from the citations already accepted for this decision. */
-function persistApplicantExplanation(
-  dbPath: string,
-  input: {
+async function persistApplicantExplanation(
+    input: {
     application: ApplicationRow;
     evaluation: EvaluationRow;
     decisionId: string;
@@ -469,26 +445,24 @@ function persistApplicantExplanation(
   },
 ) {
   const findings = input.findingIds.length
-    ? queryFile<{
+    ? await query<{
         criterion_statement_snapshot: string;
         criterion_disposition_snapshot: "MANDATORY" | "PREFERRED" | "INFORMATIONAL";
         finding_origin: "DETERMINISTIC_RULE" | "MODEL";
         assessment_state: "SATISFIED" | "NOT_SATISFIED" | "INSUFFICIENT_EVIDENCE" | "REQUIRES_HUMAN_JUDGMENT";
       }>(
-        dbPath,
         `SELECT criterion_statement_snapshot, criterion_disposition_snapshot, finding_origin, assessment_state
          FROM criterion_findings WHERE evaluation_id = ? AND id IN (${input.findingIds.map(() => "?").join(", ")})`,
         [input.evaluation.id, ...input.findingIds],
       )
     : [];
   const humanAssessments = input.humanAssessmentIds.length
-    ? queryFile<{
+    ? await query<{
         statement: string;
         disposition: "MANDATORY" | "PREFERRED" | "INFORMATIONAL";
         kind: "HUMAN_JUDGMENT" | "OTHER";
         assessment: "SATISFIED" | "NOT_SATISFIED" | "CANNOT_DETERMINE";
       }>(
-        dbPath,
         `SELECT criterion.statement, criterion.disposition,
                 CASE WHEN criterion.kind = 'HUMAN_JUDGMENT' THEN 'HUMAN_JUDGMENT' ELSE 'OTHER' END AS kind,
                 assessment.assessment
@@ -517,8 +491,7 @@ function persistApplicantExplanation(
   });
   const id = randomUUID();
   const generatedAt = timestamp();
-  runFile(
-    dbPath,
+  await run(
     `INSERT INTO applicant_explanations (
       id, application_id, evaluation_id, decision_id, criteria_set_id, applicant_user_id, company_id, body_json, rendered_text,
       generated_at, released_at, released_by_user_id
@@ -538,7 +511,7 @@ function persistApplicantExplanation(
       null,
     ],
   );
-  audit(dbPath, {
+  await audit({
     eventType: "APPLICANT_EXPLANATION_GENERATED",
     entityType: "APPLICANT_EXPLANATION",
     entityId: id,
@@ -549,9 +522,8 @@ function persistApplicantExplanation(
   return id;
 }
 
-export function recordEmployerDecision(
-  dbPath: string,
-  actor: EmployerActor,
+export async function recordEmployerDecision(
+    actor: EmployerActor,
   input: {
     applicationId: string;
     evaluationId?: string;
@@ -564,8 +536,8 @@ export function recordEmployerDecision(
     supersedesDecisionId?: string;
   },
 ) {
-  return transactionFile(dbPath, () => {
-    const application = applicationForActor(dbPath, actor, input.applicationId);
+  return tx(async () => {
+    const application = await applicationForActor(actor, input.applicationId);
     if (input.decision === "DO_NOT_ADVANCE" && !input.reasonCategory) {
       throw new EvaluationPersistenceError("INVALID_INPUT", "A do-not-advance decision requires a reason category.");
     }
@@ -580,7 +552,7 @@ export function recordEmployerDecision(
       "EVIDENCE_INSUFFICIENT_AFTER_REVIEW",
       "HUMAN_JUDGMENT_CRITERION_NOT_MET",
     ]);
-    const evaluation = input.evaluationId ? evaluationForActor(dbPath, actor, input.evaluationId) : null;
+    const evaluation = input.evaluationId ? await evaluationForActor(actor, input.evaluationId) : null;
     if (evaluation && evaluation.application_id !== application.id) {
       throw new EvaluationPersistenceError("INVALID_INPUT", "The decision evaluation must belong to the application.");
     }
@@ -596,7 +568,7 @@ export function recordEmployerDecision(
       throw new EvaluationPersistenceError("INVALID_INPUT", "Decision citations cannot contain duplicates.");
     }
     if (input.reasonCategory) {
-      assertDecisionGrounding(dbPath, {
+      await assertDecisionGrounding({
         application,
         evaluation,
         reason: input.reasonCategory,
@@ -608,8 +580,7 @@ export function recordEmployerDecision(
 
     const id = randomUUID();
     const createdAt = timestamp();
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO employer_decisions (
         id, application_id, evaluation_id, criteria_set_id, hiring_round_id, decision, reason_category,
         internal_note, supersedes_decision_id, actor_user_id, actor_company_user_id, created_at
@@ -630,23 +601,22 @@ export function recordEmployerDecision(
       ],
     );
     for (const findingId of findingIds) {
-      runFile(dbPath, "INSERT INTO employer_decision_findings (decision_id, finding_id) VALUES (?, ?)", [id, findingId]);
+      await run("INSERT INTO employer_decision_findings (decision_id, finding_id) VALUES (?, ?)", [id, findingId]);
     }
     for (const assessmentId of humanAssessmentIds) {
-      runFile(dbPath, "INSERT INTO employer_decision_human_assessments (decision_id, assessment_id) VALUES (?, ?)", [id, assessmentId]);
+      await run("INSERT INTO employer_decision_human_assessments (decision_id, assessment_id) VALUES (?, ?)", [id, assessmentId]);
     }
     if (evaluation && !evaluation.locked_by_decision_id) {
-      runFile(dbPath, "UPDATE application_evaluations SET locked_by_decision_id = ? WHERE id = ?", [id, evaluation.id]);
+      await run("UPDATE application_evaluations SET locked_by_decision_id = ? WHERE id = ?", [id, evaluation.id]);
     }
     const disposition =
       input.decision === "ADVANCE" ? "ADVANCED" : input.decision === "DO_NOT_ADVANCE" ? "NOT_ADVANCED" : "NEEDS_HUMAN_REVIEW";
-    runFile(
-      dbPath,
-      "UPDATE local_applications SET current_decision_id = ?, disposition_state = ?, status = 'REVIEWED', updated_at = ? WHERE id = ?",
+    await run(
+      "UPDATE applications SET current_decision_id = ?, disposition_state = ?, status = 'REVIEWED', updated_at = ? WHERE id = ?",
       [id, disposition, createdAt, application.id],
     );
     const explanationId = evaluation
-      ? persistApplicantExplanation(dbPath, {
+      ? await persistApplicantExplanation({
           application,
           evaluation,
           decisionId: id,
@@ -657,13 +627,12 @@ export function recordEmployerDecision(
           actor,
         })
       : null;
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO application_transitions (id, application_id, from_state, to_state, actor_kind, actor_user_id, rule_criterion_id, rationale, created_at)
        VALUES (?, ?, ?, ?, 'HUMAN', ?, NULL, ?, ?)`,
       [randomUUID(), application.id, application.disposition_state, disposition, actor.userId, "Employer decision recorded", createdAt],
     );
-    audit(dbPath, {
+    await audit({
       eventType: "EMPLOYER_DECISION_RECORDED",
       entityType: "EMPLOYER_DECISION",
       entityId: id,
@@ -683,11 +652,10 @@ export function recordEmployerDecision(
 }
 
 /** Releases an immutable, already-generated explanation and notifies only the applicant who owns it. */
-export function releaseApplicantExplanation(dbPath: string, actor: EmployerActor, applicationId: string) {
-  return transactionFile(dbPath, () => {
-    const application = applicationForActor(dbPath, actor, applicationId);
-    const explanation = queryOneFile<{ id: string; decision_id: string | null; released_at: string | null }>(
-      dbPath,
+export async function releaseApplicantExplanation(actor: EmployerActor, applicationId: string) {
+  return tx(async () => {
+    const application = await applicationForActor(actor, applicationId);
+    const explanation = await queryOne<{ id: string; decision_id: string | null; released_at: string | null }>(
       `SELECT id, decision_id, released_at
        FROM applicant_explanations
        WHERE application_id = ? AND company_id = ?
@@ -698,18 +666,17 @@ export function releaseApplicantExplanation(dbPath: string, actor: EmployerActor
     if (explanation.released_at) return { id: explanation.id, releasedAt: explanation.released_at, notificationId: null };
 
     const releasedAt = timestamp();
-    runFile(
-      dbPath,
+    await run(
       "UPDATE applicant_explanations SET released_at = ?, released_by_user_id = ? WHERE id = ? AND released_at IS NULL",
       [releasedAt, actor.userId, explanation.id],
     );
-    const { notificationId } = enqueueNotification(dbPath, {
+    const { notificationId } = await enqueueNotification({
       recipientUserId: application.seeker_user_id,
       applicationId: application.id,
       type: "DECISION_AVAILABLE",
       payload: { decisionId: explanation.decision_id, explanationId: explanation.id, applicationId: application.id },
     });
-    audit(dbPath, {
+    await audit({
       eventType: "APPLICANT_EXPLANATION_RELEASED",
       entityType: "APPLICANT_EXPLANATION",
       entityId: explanation.id,

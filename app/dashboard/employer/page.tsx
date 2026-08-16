@@ -10,10 +10,10 @@ import { Button } from "@/components/ui/Button";
 export default async function EmployerOverview() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer");
-  const company = getCompanyForUser(user.id);
+  const company = await getCompanyForUser(user.id);
   if (!company) redirect("/register/employer");
-  const jobs = listJobsForCompany(company.id);
-  const applications = listApplicationsForCompany(company.id);
+  const jobs = await listJobsForCompany(company.id);
+  const applications = await listApplicationsForCompany(company.id);
   const activeJobs = jobs.filter((job) => job.status === "ACTIVE").length;
   const recentJobs = jobs.slice(0, 5);
 

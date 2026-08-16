@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { restoreSandboxRevision } from "@/lib/sqlite-sandbox";
+import { restoreSandboxRevision } from "@/lib/resume/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,5 +15,5 @@ export async function POST(_request: Request, context: RouteContext) {
   if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
 
   const { id } = await context.params;
-  return NextResponse.json(restoreSandboxRevision(id, sandboxIdForUser(user.id)));
+  return NextResponse.json(await restoreSandboxRevision(id, sandboxIdForUser(user.id)));
 }

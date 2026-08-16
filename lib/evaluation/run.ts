@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { queryFile, queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
+import { query, queryOne, run, tx } from "@/lib/db/sql";
 import { evaluateDeterministicRule, type DeterministicInput, type DeterministicRule } from "@/lib/criteria/rules";
 
 type LockedApplication = {
@@ -113,22 +113,20 @@ function parseRule(serialized: string): DeterministicRule {
   throw new DeterministicEvaluationError("A deterministic criterion has an invalid registered rule.");
 }
 
-function audit(dbPath: string, input: { eventType: string; entityId: string; companyId: string; metadata: Record<string, unknown> }) {
-  runFile(
-    dbPath,
+async function audit(input: { eventType: string; entityId: string; companyId: string; metadata: Record<string, unknown> }) {
+  await run(
     `INSERT INTO audit_events (id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at)
      VALUES (?, ?, 'SYSTEM', NULL, 'APPLICATION_EVALUATION', ?, ?, ?, ?)`,
     [randomUUID(), input.eventType, input.entityId, input.companyId, JSON.stringify(input.metadata), timestamp()],
   );
 }
 
-function runDeterministicEvaluation(dbPath: string, applicationId: string) {
-  const application = queryOneFile<LockedApplication>(
-    dbPath,
+async function runDeterministicEvaluation(applicationId: string) {
+  const application = await queryOne<LockedApplication>(
     `SELECT application.id, job.company_id, application.criteria_set_id, application.evaluation_state,
             application.profile_snapshot_json, application.resume_snapshot_json, application.license_confirmed
-     FROM local_applications application
-     JOIN local_jobs job ON job.id = application.job_id
+     FROM applications application
+     JOIN jobs job ON job.id = application.job_id
      JOIN job_criteria_sets criteria_set ON criteria_set.id = application.criteria_set_id
      WHERE application.id = ? AND criteria_set.status = 'PUBLISHED' AND criteria_set.authoring_state = 'STRUCTURED'`,
     [applicationId],
@@ -137,25 +135,24 @@ function runDeterministicEvaluation(dbPath: string, applicationId: string) {
   if (application.evaluation_state !== "NOT_STARTED") {
     throw new DeterministicEvaluationError("The application is not ready for deterministic evaluation.");
   }
-  const existingRun = queryOneFile<{ id: string }>(dbPath, "SELECT id FROM application_evaluations WHERE application_id = ?", [application.id]);
+  const existingRun = await queryOne<{ id: string }>("SELECT id FROM application_evaluations WHERE application_id = ?", [application.id]);
   if (existingRun) throw new DeterministicEvaluationError("The application already has an evaluation run.");
 
-  const runNumber = Number(queryOneFile<{ next_run: number }>(
-    dbPath,
+  const runRow = await queryOne<{ next_run: number }>(
     "SELECT COALESCE(MAX(run_number), 0) + 1 AS next_run FROM application_evaluations WHERE application_id = ?",
     [application.id],
-  )?.next_run ?? 1);
+  );
+  const runNumber = Number(runRow?.next_run ?? 1);
   const evaluationId = randomUUID();
   const startedAt = timestamp();
-  runFile(
-    dbPath,
+  await run(
     `INSERT INTO application_evaluations (
       id, application_id, criteria_set_id, run_number, state, evaluator_kind, started_at
     ) VALUES (?, ?, ?, ?, 'IN_PROGRESS', 'SYSTEM', ?)`,
     [evaluationId, application.id, application.criteria_set_id, runNumber, startedAt],
   );
-  runFile(dbPath, "UPDATE local_applications SET evaluation_state = 'IN_PROGRESS', updated_at = ? WHERE id = ?", [startedAt, application.id]);
-  audit(dbPath, {
+  await run("UPDATE applications SET evaluation_state = 'IN_PROGRESS', updated_at = ? WHERE id = ?", [startedAt, application.id]);
+  await audit({
     eventType: "EVALUATION_STARTED",
     entityId: evaluationId,
     companyId: application.company_id,
@@ -163,8 +160,7 @@ function runDeterministicEvaluation(dbPath: string, applicationId: string) {
   });
 
   const input = snapshotInput(application);
-  const criteria = queryFile<LockedCriterion>(
-    dbPath,
+  const criteria = await query<LockedCriterion>(
     `SELECT id, kind, disposition, evaluation_mode, statement, deterministic_rule_json, requires_human_review
      FROM job_criteria WHERE criteria_set_id = ? ORDER BY ordinal ASC`,
     [application.criteria_set_id],
@@ -178,8 +174,7 @@ function runDeterministicEvaluation(dbPath: string, applicationId: string) {
     }
     if (!criterion.deterministic_rule_json) throw new DeterministicEvaluationError("A deterministic criterion is missing its registered rule.");
     const result = evaluateDeterministicRule(parseRule(criterion.deterministic_rule_json), input);
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO criterion_findings (
         id, evaluation_id, criterion_id, criterion_statement_snapshot, criterion_kind_snapshot,
         criterion_disposition_snapshot, finding_origin, assessment_state, confidence, reason_code,
@@ -194,13 +189,12 @@ function runDeterministicEvaluation(dbPath: string, applicationId: string) {
   }
   const state = partial ? "PARTIAL_DETERMINISTIC" : "COMPLETE";
   const completedAt = timestamp();
-  runFile(
-    dbPath,
+  await run(
     "UPDATE application_evaluations SET state = ?, completed_at = ? WHERE id = ?",
     [state, completedAt, evaluationId],
   );
-  runFile(dbPath, "UPDATE local_applications SET evaluation_state = ?, updated_at = ? WHERE id = ?", [state, completedAt, application.id]);
-  audit(dbPath, {
+  await run("UPDATE applications SET evaluation_state = ?, updated_at = ? WHERE id = ?", [state, completedAt, application.id]);
+  await audit({
     eventType: "EVALUATION_FINALIZED",
     entityId: evaluationId,
     companyId: application.company_id,
@@ -210,11 +204,11 @@ function runDeterministicEvaluation(dbPath: string, applicationId: string) {
 }
 
 /** Runs under the caller's open SQLite transaction. This is the submit-time path. */
-export function runDeterministicEvaluationInTransaction(dbPath: string, applicationId: string) {
-  return runDeterministicEvaluation(dbPath, applicationId);
+export async function runDeterministicEvaluationInTransaction(applicationId: string) {
+  return await runDeterministicEvaluation(applicationId);
 }
 
 /** Test and worker-safe boundary for callers that do not already own the SQLite transaction. */
-export function runDeterministicEvaluationForApplication(dbPath: string, applicationId: string) {
-  return transactionFile(dbPath, () => runDeterministicEvaluation(dbPath, applicationId));
+export async function runDeterministicEvaluationForApplication(applicationId: string) {
+  return tx(async () => await runDeterministicEvaluation(applicationId));
 }

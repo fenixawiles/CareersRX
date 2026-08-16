@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withApiHandler } from "@/lib/evaluation/http";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 import { startEvaluationRun } from "@/lib/evaluation/persistence";
 
 export const runtime = "nodejs";
@@ -22,7 +21,7 @@ export async function POST(request: Request, context: RouteContext) {
     const parsed = requestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return NextResponse.json({ error: "Invalid evaluation request" }, { status: 400 });
     const { id } = await routeContext.params;
-    const evaluation = startEvaluationRun(evaluationDbPath(), actor, { applicationId: id, ...parsed.data });
+    const evaluation = await startEvaluationRun(actor, { applicationId: id, ...parsed.data });
     return NextResponse.json({ evaluation }, { status: 201 });
   });
 }

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 import { runRetentionSweep } from "@/lib/retention/sweep";
 
 export const runtime = "nodejs";
@@ -15,7 +14,7 @@ export async function POST(request: Request) {
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid retention sweep request" }, { status: 400 });
   try {
-    return NextResponse.json({ sweep: runRetentionSweep(evaluationDbPath(), parsed.data.companyId, parsed.data.limit) });
+    return NextResponse.json({ sweep: await runRetentionSweep(parsed.data.companyId, parsed.data.limit) });
   } catch (error) {
     console.error("[careersrx/retention] sweep failed", error);
     return NextResponse.json({ error: "Retention sweep failed" }, { status: 500 });

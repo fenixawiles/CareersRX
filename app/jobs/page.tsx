@@ -29,7 +29,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SearchP
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
 
-  const { jobs, total } = listPublicJobs({
+  const { jobs, total } = await listPublicJobs({
     q: sp.q,
     category: sp.category,
     state: sp.state,

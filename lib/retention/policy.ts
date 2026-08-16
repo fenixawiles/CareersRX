@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { queryOneFile, runFile } from "@/lib/db/sql";
+import { queryOne, run } from "@/lib/db/sql";
 
 export function retentionCutoff(retentionMonths: number, current = new Date()) {
   const cutoff = new Date(current);
@@ -9,9 +9,8 @@ export function retentionCutoff(retentionMonths: number, current = new Date()) {
   return cutoff.toISOString();
 }
 
-export function getRetentionPolicy(dbPath: string, companyId: string) {
-  const policy = queryOneFile<{ retention_months: number }>(
-    dbPath,
+export async function getRetentionPolicy(companyId: string) {
+  const policy = await queryOne<{ retention_months: number }>(
     "SELECT retention_months FROM retention_policies WHERE company_id = ?",
     [companyId],
   );
@@ -19,16 +18,14 @@ export function getRetentionPolicy(dbPath: string, companyId: string) {
 }
 
 /** This is a recorded request, not immediate erasure; legal holds and retention obligations are reviewed before execution. */
-export function requestAccountDeletion(dbPath: string, userId: string) {
-  const existing = queryOneFile<{ id: string; state: string }>(
-    dbPath,
+export async function requestAccountDeletion(userId: string) {
+  const existing = await queryOne<{ id: string; state: string }>(
     "SELECT id, state FROM account_deletion_requests WHERE user_id = ?",
     [userId],
   );
   if (existing) return { id: existing.id, state: existing.state, created: false as const };
   const id = randomUUID();
-  runFile(
-    dbPath,
+  await run(
     `INSERT INTO account_deletion_requests (id, user_id, state, requested_at)
      VALUES (?, ?, 'REQUESTED', ?)`,
     [id, userId, new Date().toISOString()],

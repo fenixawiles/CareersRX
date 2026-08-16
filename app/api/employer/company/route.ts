@@ -15,7 +15,7 @@ async function requireEmployer() {
 export async function GET() {
   const auth = await requireEmployer();
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  const company = getCompanyForUser(auth.user.id);
+  const company = await getCompanyForUser(auth.user.id);
   if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
   return NextResponse.json({ company });
 }
@@ -25,7 +25,7 @@ export async function PATCH(request: Request) {
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return NextResponse.json({ error: "Invalid company update" }, { status: 400 });
-  const company = updateCompanyForUser(auth.user.id, {
+  const company = await updateCompanyForUser(auth.user.id, {
     name: typeof body.name === "string" ? body.name : undefined,
     website: typeof body.website === "string" ? body.website : undefined,
     phone: typeof body.phone === "string" ? body.phone : undefined,

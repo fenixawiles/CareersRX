@@ -6,7 +6,7 @@ if (!email) {
   throw new Error("ADMIN_SEED_EMAIL must name an already registered user.");
 }
 
-const result = bootstrapLocalAdmin(email);
+const result = await bootstrapLocalAdmin(email);
 if (!result.ok) throw new Error(result.error);
 
 console.log(`Bootstrapped local administrator: ${result.email}`);

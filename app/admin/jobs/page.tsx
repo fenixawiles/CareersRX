@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { MapPin } from "lucide-react";
-import { prisma } from "@/lib/prisma";
-import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
+import { adminJobs } from "@/lib/admin/queries";
+import { DashboardHeading } from "@/components/dashboard/DashboardUI";
 import { JobStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { requireAdmin } from "@/lib/auth/policy";
@@ -11,11 +11,7 @@ export default async function AdminJobs() {
   await requireAdmin();
   await connection();
 
-  const jobs = await prisma.job.findMany({
-    orderBy: { publishedAt: "desc" },
-    take: 40,
-    include: { company: { select: { name: true } } },
-  });
+  const jobs = await adminJobs(40);
 
   return (
     <div className="space-y-6">
@@ -40,7 +36,7 @@ export default async function AdminJobs() {
                     {job.title}
                   </Link>
                 </td>
-                <td className="hidden px-4 py-3 text-muted sm:table-cell">{job.company.name}</td>
+                <td className="hidden px-4 py-3 text-muted sm:table-cell">{job.companyName}</td>
                 <td className="hidden px-4 py-3 text-muted md:table-cell">
                   <span className="inline-flex items-center gap-1.5">
                     <MapPin size={13} /> {job.city}, {job.state}

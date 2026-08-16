@@ -19,12 +19,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
   }
 
-  const user = authenticateLocalUser(body.email, body.password);
+  const user = await authenticateLocalUser(body.email, body.password);
   if (!user) {
     return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
 
-  const session = createLocalSession(user.id);
+  const session = await createLocalSession(user.id);
   const response = NextResponse.json({ user, dashboardPath: dashboardPathForUser(user) });
   response.cookies.set({
     ...sessionCookieOptions(session.expiresAt),

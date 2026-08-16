@@ -14,6 +14,9 @@ const prohibitedPatterns: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b(marital status|married|single|divorc(?:ed|e)|family status|children)\b/i, label: "marital or family status" },
   { pattern: /\b(zip code|postcode|neighbou?rhood|commute distance|home ownership)\b/i, label: "a protected-trait proxy" },
   { pattern: /\b(arrest record|criminal history|conviction history)\b/i, label: "a protected-trait proxy" },
+  // Age proxies. Direct age requirements route through the LEGAL_MINIMUM_AGE template check in
+  // authoring; these catch the softer stand-ins that imply an age preference.
+  { pattern: /\b(young|youthful|energetic|digital native|recent graduate|new grad|older worker|overqualified)\b/i, label: "an age proxy" },
 ];
 
 export type ProhibitedCriterion = { label: string };

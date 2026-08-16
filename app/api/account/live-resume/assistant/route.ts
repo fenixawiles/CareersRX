@@ -4,7 +4,7 @@ import {
 } from "@/lib/ai/schemas";
 import { answerRexAssistant } from "@/lib/ai/openai";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { getSandboxSnapshot, writeSandboxAiInteraction } from "@/lib/sqlite-sandbox";
+import { getSandboxSnapshot, writeSandboxAiInteraction } from "@/lib/resume/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   }
 
   const sandboxId = sandboxIdForUser(user.id);
-  const snapshot = getSandboxSnapshot(sandboxId);
+  const snapshot = await getSandboxSnapshot(sandboxId);
   const body = parsedRequest.data;
   const sectionId =
     body.task === "review_summary"
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       revisions: snapshot.revisions,
     });
 
-    const interactionId = writeSandboxAiInteraction({
+    const interactionId = await writeSandboxAiInteraction({
       sandboxId,
       task: `REX_${body.task.toUpperCase()}`,
       model: ai.model,
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ...ai.output, demoMode: ai.demoMode, interactionId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Rex assistant request failed";
-    writeSandboxAiInteraction({
+    await writeSandboxAiInteraction({
       sandboxId,
       task: `REX_${body.task.toUpperCase()}`,
       model: process.env.OPENAI_MODEL ?? "gpt-5.4",

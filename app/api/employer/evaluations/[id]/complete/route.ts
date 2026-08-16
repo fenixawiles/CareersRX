@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withApiHandler } from "@/lib/evaluation/http";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 import { completeEvaluationRun } from "@/lib/evaluation/persistence";
 
 export const runtime = "nodejs";
@@ -19,6 +18,6 @@ export async function POST(request: Request, context: RouteContext) {
     const parsed = requestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return NextResponse.json({ error: "Invalid evaluation finalization request" }, { status: 400 });
     const { id } = await routeContext.params;
-    return NextResponse.json({ evaluation: completeEvaluationRun(evaluationDbPath(), actor, { evaluationId: id, ...parsed.data }) });
+    return NextResponse.json({ evaluation: await completeEvaluationRun(actor, { evaluationId: id, ...parsed.data }) });
   });
 }

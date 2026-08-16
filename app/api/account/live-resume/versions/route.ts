@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { createSandboxNamedVersion } from "@/lib/sqlite-sandbox";
+import { createSandboxNamedVersion } from "@/lib/resume/store";
 import type { SandboxResumeVersionStatus } from "@/lib/sandbox-types";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json(
-    createSandboxNamedVersion(
+    await createSandboxNamedVersion(
       {
         title: body.title,
         purpose: typeof body.purpose === "string" ? body.purpose : undefined,

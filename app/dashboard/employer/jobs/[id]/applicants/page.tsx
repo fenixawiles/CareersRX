@@ -8,7 +8,6 @@ import { ApplicationStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { ApplicantEvaluationPanel } from "@/components/employer/ApplicantEvaluationPanel";
 import { getEmployerApplicationEvaluation } from "@/lib/evaluation/employer-read";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 import { postedAgo } from "@/lib/utils";
 
 type Params = Promise<{ id: string }>;
@@ -17,11 +16,16 @@ export default async function ApplicantsPage({ params }: { params: Params }) {
   const { id } = await params;
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/jobs");
-  const company = getCompanyForUser(user.id);
+  const company = await getCompanyForUser(user.id);
   if (!company) redirect("/register/employer");
-  const job = getJobForCompany(id, company.id);
+  const job = await getJobForCompany(id, company.id);
   if (!job) notFound();
-  const applications = listApplicationsForCompany(company.id, job.id);
+  const applications = await listApplicationsForCompany(company.id, job.id);
+  const evaluations = new Map(
+    await Promise.all(
+      applications.map(async (app) => [app.id, await getEmployerApplicationEvaluation(company.id, app.id)] as const),
+    ),
+  );
 
   return (
     <div className="space-y-6">
@@ -46,7 +50,7 @@ export default async function ApplicantsPage({ params }: { params: Params }) {
       ) : (
         <div className="space-y-3">
           {applications.map((app) => {
-            const evaluation = getEmployerApplicationEvaluation(evaluationDbPath(), company.id, app.id);
+            const evaluation = evaluations.get(app.id) ?? null;
             return (
             <Card key={app.id}>
               <div className="flex flex-wrap items-start justify-between gap-4">

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { resumeImportApplyModeSchema } from "@/lib/ai/schemas";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { applySandboxResumeImport } from "@/lib/sqlite-sandbox";
+import { applySandboxResumeImport } from "@/lib/resume/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: "Unsupported résumé import apply mode." }, { status: 400 });
   }
 
-  const result = applySandboxResumeImport(id, parsedMode.data, sandboxIdForUser(user.id));
+  const result = await applySandboxResumeImport(id, parsedMode.data, sandboxIdForUser(user.id));
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json(result.snapshot);
 }

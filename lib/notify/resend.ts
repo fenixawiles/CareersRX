@@ -1,7 +1,7 @@
 import "server-only";
 
 import { Resend } from "resend";
-import { queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
+import { queryOne, run, tx } from "@/lib/db/sql";
 import { renderNotificationEmail } from "@/lib/notify/render";
 import type { NotificationType } from "@/lib/notify/types";
 
@@ -17,14 +17,13 @@ function appBaseUrl() {
   return new URL(value).origin;
 }
 
-function claimPendingEmail(dbPath: string, workerId: string): ClaimedEmail | null {
-  return transactionFile(dbPath, () => {
-    const candidate = queryOneFile<ClaimedEmail>(
-      dbPath,
+async function claimPendingEmail(workerId: string): Promise<ClaimedEmail | null> {
+  return tx(async () => {
+    const candidate = await queryOne<ClaimedEmail>(
       `SELECT outbox.id, outbox.notification_id, user.email, notification.type
        FROM notification_outbox outbox
        JOIN notifications notification ON notification.id = outbox.notification_id
-       JOIN local_users user ON user.id = notification.recipient_user_id
+       JOIN users user ON user.id = notification.recipient_user_id
        WHERE outbox.channel = 'EMAIL'
          AND (outbox.state = 'PENDING' OR (outbox.state = 'CLAIMED' AND outbox.lease_expires_at < ?))
          AND outbox.next_attempt_at <= ?
@@ -33,8 +32,7 @@ function claimPendingEmail(dbPath: string, workerId: string): ClaimedEmail | nul
     );
     if (!candidate) return null;
     const claimedAt = now();
-    const result = runFile(
-      dbPath,
+    const result = await run(
       `UPDATE notification_outbox
        SET state = 'CLAIMED', attempts = attempts + 1, claimed_by = ?, claimed_at = ?,
            lease_expires_at = datetime(?, '+5 minutes'), updated_at = ?
@@ -46,8 +44,8 @@ function claimPendingEmail(dbPath: string, workerId: string): ClaimedEmail | nul
 }
 
 /** Sends at most one leased email. Cron/worker callers invoke this repeatedly; no HTTP handler sends inline. */
-export async function deliverNextNotificationEmail(dbPath: string, workerId: string) {
-  const claimed = claimPendingEmail(dbPath, workerId);
+export async function deliverNextNotificationEmail(workerId: string) {
+  const claimed = await claimPendingEmail(workerId);
   if (!claimed) return { delivered: false as const };
   try {
     const rendered = renderNotificationEmail({
@@ -60,8 +58,7 @@ export async function deliverNextNotificationEmail(dbPath: string, workerId: str
     if (!apiKey || !from) throw new Error("RESEND_API_KEY and RESEND_FROM_EMAIL are required to deliver notification email.");
     const result = await new Resend(apiKey).emails.send({ from, to: [claimed.email], subject: rendered.subject, text: rendered.text });
     if (result.error) throw new Error(result.error.message);
-    runFile(
-      dbPath,
+    await run(
       `UPDATE notification_outbox
        SET state = 'SENT', sent_at = ?, provider_message_id = ?, lease_expires_at = NULL, updated_at = ?
        WHERE id = ? AND state = 'CLAIMED' AND claimed_by = ?`,
@@ -70,8 +67,7 @@ export async function deliverNextNotificationEmail(dbPath: string, workerId: str
     return { delivered: true as const, outboxId: claimed.id };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 1200) : "Unknown delivery error";
-    runFile(
-      dbPath,
+    await run(
       `UPDATE notification_outbox
        SET state = CASE WHEN attempts >= max_attempts THEN 'DEAD_LETTERED' ELSE 'PENDING' END,
            next_attempt_at = datetime('now', '+5 minutes'), lease_expires_at = NULL,

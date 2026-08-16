@@ -13,10 +13,10 @@ import { formatSalaryRange } from "@/lib/utils";
 export default async function EmployerJobs() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/jobs");
-  const company = getCompanyForUser(user.id);
+  const company = await getCompanyForUser(user.id);
   if (!company) redirect("/register/employer");
-  const jobs = listJobsForCompany(company.id);
-  const applications = listApplicationsForCompany(company.id);
+  const jobs = await listJobsForCompany(company.id);
+  const applications = await listApplicationsForCompany(company.id);
 
   return (
     <div className="space-y-6">

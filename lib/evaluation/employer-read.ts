@@ -1,6 +1,6 @@
 import "server-only";
 
-import { queryFile, queryOneFile } from "@/lib/db/sql";
+import { query, queryOne } from "@/lib/db/sql";
 import { deriveCounters, type EvaluationCounters } from "@/lib/evaluation/derive-counters";
 
 export type EmployerFinding = {
@@ -22,34 +22,32 @@ export type EmployerApplicationEvaluation = {
   counters: EvaluationCounters;
 };
 
-export function getEmployerApplicationEvaluation(dbPath: string, companyId: string, applicationId: string): EmployerApplicationEvaluation | null {
-  const application = queryOneFile<{ criteria_set_id: string; evaluation_state: string }>(
-    dbPath,
+export async function getEmployerApplicationEvaluation(companyId: string, applicationId: string): Promise<EmployerApplicationEvaluation | null> {
+  const application = await queryOne<{ criteria_set_id: string; evaluation_state: string }>(
     `SELECT application.criteria_set_id, application.evaluation_state
-     FROM local_applications application
-     JOIN local_jobs job ON job.id = application.job_id
+     FROM applications application
+     JOIN jobs job ON job.id = application.job_id
      WHERE application.id = ? AND job.company_id = ?`,
     [applicationId, companyId],
   );
   if (!application) return null;
-  const evaluation = queryOneFile<{ id: string; state: string }>(
-    dbPath,
+  const evaluation = await queryOne<{ id: string; state: string }>(
     `SELECT id, state FROM application_evaluations
      WHERE application_id = ? ORDER BY run_number DESC LIMIT 1`,
     [applicationId],
   );
-  const findings = queryFile<{
+  const findingRows = await query<{
     id: string; label: string; statement: string; disposition: EmployerFinding["disposition"]; evaluation_mode: EmployerFinding["evaluationMode"];
     finding_id: string | null; assessment_state: EmployerFinding["assessment"]; reason_code: string | null; requires_human_review: number;
   }>(
-    dbPath,
     `SELECT criterion.id, criterion.label, criterion.statement, criterion.disposition, criterion.evaluation_mode,
             finding.id AS finding_id, finding.assessment_state, finding.reason_code, criterion.requires_human_review
      FROM job_criteria criterion
      LEFT JOIN criterion_findings finding ON finding.criterion_id = criterion.id AND finding.evaluation_id = ?
      WHERE criterion.criteria_set_id = ? ORDER BY criterion.ordinal ASC`,
     [evaluation?.id ?? "", application.criteria_set_id],
-  ).map((finding) => ({
+  );
+  const findings = findingRows.map((finding) => ({
     criterionId: finding.id,
     label: finding.label,
     statement: finding.statement,

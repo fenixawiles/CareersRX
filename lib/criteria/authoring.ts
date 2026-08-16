@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { queryFile, queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
+import { query, queryOne, run, tx } from "@/lib/db/sql";
 import { findProhibitedCriterion } from "@/lib/criteria/prohibited";
 import type { EmployerActor } from "@/lib/evaluation/persistence";
 
@@ -107,10 +107,9 @@ function timestamp() {
   return new Date().toISOString();
 }
 
-function activeActor(dbPath: string, actor: EmployerActor) {
-  const membership = queryOneFile<{ id: string }>(
-    dbPath,
-    `SELECT id FROM local_company_users
+async function activeActor(actor: EmployerActor) {
+  const membership = await queryOne<{ id: string }>(
+    `SELECT id FROM company_users
      WHERE id = ? AND company_id = ? AND user_id = ? AND revoked_at IS NULL
        AND role IN ('OWNER', 'ADMIN', 'RECRUITER')`,
     [actor.companyUserId, actor.companyId, actor.userId],
@@ -158,25 +157,23 @@ function mapSet(row: SetRow, criteria: AuthoredCriterion[]): AuthoredCriteriaSet
   };
 }
 
-function criteriaForSet(dbPath: string, criteriaSetId: string) {
-  return queryFile<CriterionRow>(
-    dbPath,
+async function criteriaForSet(criteriaSetId: string) {
+  return (await query<CriterionRow>(
     `SELECT id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement,
             rule_template_id, deterministic_rule_json, requires_human_review, auto_enforceable, created_at
      FROM job_criteria WHERE criteria_set_id = ? ORDER BY ordinal ASC, created_at ASC`,
     [criteriaSetId],
-  ).map(mapCriterion);
+  )).map(mapCriterion);
 }
 
-function setForActor(dbPath: string, actor: EmployerActor, criteriaSetId: string) {
-  activeActor(dbPath, actor);
-  const row = queryOneFile<SetRow>(
-    dbPath,
+async function setForActor(actor: EmployerActor, criteriaSetId: string) {
+  await activeActor(actor);
+  const row = await queryOne<SetRow>(
     `SELECT criteria_set.id, criteria_set.job_id, criteria_set.version, criteria_set.status, criteria_set.authoring_state,
             criteria_set.published_at, criteria_set.published_by_user_id, criteria_set.superseded_at,
             criteria_set.superseded_by_set_id, criteria_set.created_at
      FROM job_criteria_sets criteria_set
-     JOIN local_jobs job ON job.id = criteria_set.job_id
+     JOIN jobs job ON job.id = criteria_set.job_id
      WHERE criteria_set.id = ? AND job.company_id = ?`,
     [criteriaSetId, actor.companyId],
   );
@@ -184,8 +181,8 @@ function setForActor(dbPath: string, actor: EmployerActor, criteriaSetId: string
   return row;
 }
 
-function draftSetForActor(dbPath: string, actor: EmployerActor, criteriaSetId: string) {
-  const set = setForActor(dbPath, actor, criteriaSetId);
+async function draftSetForActor(actor: EmployerActor, criteriaSetId: string) {
+  const set = await setForActor(actor, criteriaSetId);
   if (set.status !== "DRAFT") throw new CriteriaAuthoringError("INVALID_STATE", "Published criteria are immutable; create a revision instead.");
   return set;
 }
@@ -258,48 +255,46 @@ function validateInput(input: unknown, existing?: AuthoredCriterion): Omit<Autho
   };
 }
 
-function assertRegisteredTemplate(dbPath: string, templateId: string | null) {
+async function assertRegisteredTemplate(templateId: string | null) {
   if (!templateId) return;
-  const registered = queryOneFile<{ id: string }>(dbPath, "SELECT id FROM auto_enforceable_rule_templates WHERE id = ?", [templateId]);
+  const registered = await queryOne<{ id: string }>("SELECT id FROM auto_enforceable_rule_templates WHERE id = ?", [templateId]);
   if (!registered) throw new CriteriaAuthoringError("INVALID_INPUT", "The selected rule template is not registered.");
 }
 
-export function listCriteriaForJob(dbPath: string, actor: EmployerActor, jobId: string) {
-  activeActor(dbPath, actor);
-  const sets = queryFile<SetRow>(
-    dbPath,
+export async function listCriteriaForJob(actor: EmployerActor, jobId: string) {
+  await activeActor(actor);
+  const sets = await query<SetRow>(
     `SELECT criteria_set.id, criteria_set.job_id, criteria_set.version, criteria_set.status, criteria_set.authoring_state,
             criteria_set.published_at, criteria_set.published_by_user_id, criteria_set.superseded_at,
             criteria_set.superseded_by_set_id, criteria_set.created_at
      FROM job_criteria_sets criteria_set
-     JOIN local_jobs job ON job.id = criteria_set.job_id
+     JOIN jobs job ON job.id = criteria_set.job_id
      WHERE criteria_set.job_id = ? AND job.company_id = ?
      ORDER BY criteria_set.version DESC`,
     [jobId, actor.companyId],
   );
   if (sets.length === 0) {
-    const job = queryOneFile<{ id: string }>(dbPath, "SELECT id FROM local_jobs WHERE id = ? AND company_id = ?", [jobId, actor.companyId]);
+    const job = await queryOne<{ id: string }>("SELECT id FROM jobs WHERE id = ? AND company_id = ?", [jobId, actor.companyId]);
     if (!job) throw new CriteriaAuthoringError("NOT_FOUND", "Job not found for this organization.");
   }
-  return sets.map((set) => mapSet(set, criteriaForSet(dbPath, set.id)));
+  return Promise.all(sets.map(async (set) => mapSet(set, await criteriaForSet(set.id))));
 }
 
-export function createCriterion(dbPath: string, actor: EmployerActor, criteriaSetId: string, input: CriterionAuthoringInput) {
-  return transactionFile(dbPath, () => {
-    const set = draftSetForActor(dbPath, actor, criteriaSetId);
+export async function createCriterion(actor: EmployerActor, criteriaSetId: string, input: CriterionAuthoringInput) {
+  return tx(async () => {
+    const set = await draftSetForActor(actor, criteriaSetId);
     const value = validateInput(input);
-    assertRegisteredTemplate(dbPath, value.ruleTemplateId);
-    const ordinal = value.ordinal ?? Number(queryOneFile<{ next_ordinal: number }>(
-      dbPath,
+    await assertRegisteredTemplate(value.ruleTemplateId);
+    const nextOrdinal = await queryOne<{ next_ordinal: number }>(
       "SELECT COALESCE(MAX(ordinal), 0) + 1 AS next_ordinal FROM job_criteria WHERE criteria_set_id = ?",
       [set.id],
-    )?.next_ordinal ?? 1);
-    const existingOrdinal = queryOneFile<{ id: string }>(dbPath, "SELECT id FROM job_criteria WHERE criteria_set_id = ? AND ordinal = ?", [set.id, ordinal]);
+    );
+    const ordinal = value.ordinal ?? Number(nextOrdinal?.next_ordinal ?? 1);
+    const existingOrdinal = await queryOne<{ id: string }>("SELECT id FROM job_criteria WHERE criteria_set_id = ? AND ordinal = ?", [set.id, ordinal]);
     if (existingOrdinal) throw new CriteriaAuthoringError("INVALID_INPUT", "A criterion already uses that ordinal in this set.");
     const id = randomUUID();
     const createdAt = timestamp();
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO job_criteria (
          id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement,
          rule_template_id, deterministic_rule_json, requires_human_review, auto_enforceable, created_at
@@ -311,28 +306,26 @@ export function createCriterion(dbPath: string, actor: EmployerActor, criteriaSe
       ],
     );
     if (set.authoring_state === "UNSTRUCTURED") {
-      runFile(dbPath, "UPDATE job_criteria_sets SET authoring_state = 'STRUCTURED' WHERE id = ?", [set.id]);
+      await run("UPDATE job_criteria_sets SET authoring_state = 'STRUCTURED' WHERE id = ?", [set.id]);
     }
-    return criteriaForSet(dbPath, set.id).find((criterion) => criterion.id === id)!;
+    return (await criteriaForSet(set.id)).find((criterion) => criterion.id === id)!;
   });
 }
 
-export function updateCriterion(dbPath: string, actor: EmployerActor, criteriaSetId: string, criterionId: string, input: CriterionPatchInput) {
-  return transactionFile(dbPath, () => {
-    const set = draftSetForActor(dbPath, actor, criteriaSetId);
-    const current = criteriaForSet(dbPath, set.id).find((criterion) => criterion.id === criterionId);
+export async function updateCriterion(actor: EmployerActor, criteriaSetId: string, criterionId: string, input: CriterionPatchInput) {
+  return tx(async () => {
+    const set = await draftSetForActor(actor, criteriaSetId);
+    const current = (await criteriaForSet(set.id)).find((criterion) => criterion.id === criterionId);
     if (!current) throw new CriteriaAuthoringError("NOT_FOUND", "Criterion not found in this criteria set.");
     const value = validateInput(input, current);
-    assertRegisteredTemplate(dbPath, value.ruleTemplateId);
+    await assertRegisteredTemplate(value.ruleTemplateId);
     const ordinal = value.ordinal ?? current.ordinal;
-    const conflictingOrdinal = queryOneFile<{ id: string }>(
-      dbPath,
+    const conflictingOrdinal = await queryOne<{ id: string }>(
       "SELECT id FROM job_criteria WHERE criteria_set_id = ? AND ordinal = ? AND id <> ?",
       [set.id, ordinal, current.id],
     );
     if (conflictingOrdinal) throw new CriteriaAuthoringError("INVALID_INPUT", "A criterion already uses that ordinal in this set.");
-    runFile(
-      dbPath,
+    await run(
       `UPDATE job_criteria
        SET ordinal = ?, kind = ?, disposition = ?, evaluation_mode = ?, label = ?, statement = ?,
            rule_template_id = ?, deterministic_rule_json = ?, requires_human_review = ?, auto_enforceable = ?
@@ -343,71 +336,66 @@ export function updateCriterion(dbPath: string, actor: EmployerActor, criteriaSe
         value.requiresHumanReview ? 1 : 0, value.autoEnforceable ? 1 : 0, current.id, set.id,
       ],
     );
-    return criteriaForSet(dbPath, set.id).find((criterion) => criterion.id === current.id)!;
+    return (await criteriaForSet(set.id)).find((criterion) => criterion.id === current.id)!;
   });
 }
 
-export function deleteCriterion(dbPath: string, actor: EmployerActor, criteriaSetId: string, criterionId: string) {
-  return transactionFile(dbPath, () => {
-    const set = draftSetForActor(dbPath, actor, criteriaSetId);
-    const result = runFile(dbPath, "DELETE FROM job_criteria WHERE id = ? AND criteria_set_id = ?", [criterionId, set.id]);
+export async function deleteCriterion(actor: EmployerActor, criteriaSetId: string, criterionId: string) {
+  return tx(async () => {
+    const set = await draftSetForActor(actor, criteriaSetId);
+    const result = await run("DELETE FROM job_criteria WHERE id = ? AND criteria_set_id = ?", [criterionId, set.id]);
     if (result.changes === 0) throw new CriteriaAuthoringError("NOT_FOUND", "Criterion not found in this criteria set.");
   });
 }
 
-export function publishCriteriaSet(dbPath: string, actor: EmployerActor, criteriaSetId: string) {
-  return transactionFile(dbPath, () => {
-    const set = draftSetForActor(dbPath, actor, criteriaSetId);
-    const criteria = criteriaForSet(dbPath, set.id);
+export async function publishCriteriaSet(actor: EmployerActor, criteriaSetId: string) {
+  return tx(async () => {
+    const set = await draftSetForActor(actor, criteriaSetId);
+    const criteria = await criteriaForSet(set.id);
     if (set.authoring_state === "STRUCTURED" && criteria.length === 0) {
       throw new CriteriaAuthoringError("INVALID_INPUT", "Structured criteria sets must contain at least one criterion before publication.");
     }
-    const existingPublished = queryOneFile<{ id: string }>(
-      dbPath,
+    const existingPublished = await queryOne<{ id: string }>(
       "SELECT id FROM job_criteria_sets WHERE job_id = ? AND status = 'PUBLISHED'",
       [set.job_id],
     );
     const publishedAt = timestamp();
     if (existingPublished) {
-      runFile(
-        dbPath,
+      await run(
         `UPDATE job_criteria_sets
          SET status = 'SUPERSEDED', superseded_at = ?, superseded_by_set_id = ?
          WHERE id = ?`,
         [publishedAt, set.id, existingPublished.id],
       );
     }
-    runFile(
-      dbPath,
+    await run(
       `UPDATE job_criteria_sets SET status = 'PUBLISHED', published_at = ?, published_by_user_id = ? WHERE id = ?`,
       [publishedAt, actor.userId, set.id],
     );
-    return mapSet(setForActor(dbPath, actor, set.id), criteriaForSet(dbPath, set.id));
+    return mapSet(await setForActor(actor, set.id), await criteriaForSet(set.id));
   });
 }
 
-export function reviseCriteriaSet(dbPath: string, actor: EmployerActor, criteriaSetId: string) {
-  return transactionFile(dbPath, () => {
-    const current = setForActor(dbPath, actor, criteriaSetId);
+export async function reviseCriteriaSet(actor: EmployerActor, criteriaSetId: string) {
+  return tx(async () => {
+    const current = await setForActor(actor, criteriaSetId);
     if (current.status !== "PUBLISHED") throw new CriteriaAuthoringError("INVALID_STATE", "Only a published criteria set can be revised.");
-    const existingDraft = queryOneFile<{ id: string }>(dbPath, "SELECT id FROM job_criteria_sets WHERE job_id = ? AND status = 'DRAFT'", [current.job_id]);
+    const existingDraft = await queryOne<{ id: string }>("SELECT id FROM job_criteria_sets WHERE job_id = ? AND status = 'DRAFT'", [current.job_id]);
     if (existingDraft) throw new CriteriaAuthoringError("INVALID_STATE", "This job already has an editable criteria revision.");
-    const version = Number(queryOneFile<{ next_version: number }>(
-      dbPath,
+    const nextVersion = await queryOne<{ next_version: number }>(
       "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM job_criteria_sets WHERE job_id = ?",
       [current.job_id],
-    )?.next_version ?? current.version + 1);
+    );
+    const version = Number(nextVersion?.next_version ?? current.version + 1);
     const id = randomUUID();
     const createdAt = timestamp();
-    runFile(
-      dbPath,
+    await run(
       `INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at)
        VALUES (?, ?, ?, 'DRAFT', ?, ?)`,
       [id, current.job_id, version, current.authoring_state, createdAt],
     );
-    for (const criterion of criteriaForSet(dbPath, current.id)) {
-      runFile(
-        dbPath,
+    for (const criterion of await criteriaForSet(current.id)) {
+      await run(
         `INSERT INTO job_criteria (
            id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement,
            rule_template_id, deterministic_rule_json, requires_human_review, auto_enforceable, created_at
@@ -420,6 +408,6 @@ export function reviseCriteriaSet(dbPath: string, actor: EmployerActor, criteria
         ],
       );
     }
-    return mapSet(setForActor(dbPath, actor, id), criteriaForSet(dbPath, id));
+    return mapSet(await setForActor(actor, id), await criteriaForSet(id));
   });
 }

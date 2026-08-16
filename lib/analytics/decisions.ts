@@ -1,13 +1,12 @@
 import "server-only";
 
-import { queryFile } from "@/lib/db/sql";
+import { query } from "@/lib/db/sql";
 
 export type DeidentifiedDecisionExport = { reasonCategory: string; count: number };
 
 /** Exports de-identified, minimum-cohort aggregate records from released applicant artifacts only. */
-export function deidentifiedDecisionExport(dbPath: string, companyId: string, minimumCohort = 10): DeidentifiedDecisionExport[] {
-  const rows = queryFile<{ body_json: string }>(
-    dbPath,
+export async function deidentifiedDecisionExport(companyId: string, minimumCohort = 10): Promise<DeidentifiedDecisionExport[]> {
+  const rows = await query<{ body_json: string }>(
     `SELECT body_json FROM applicant_explanations WHERE company_id = ? AND released_at IS NOT NULL`,
     [companyId],
   );

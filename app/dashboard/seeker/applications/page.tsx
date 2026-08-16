@@ -11,7 +11,7 @@ import { postedAgo } from "@/lib/utils";
 export default async function SeekerApplications() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "SEEKER") redirect("/login?next=/dashboard/seeker/applications");
-  const applications = listApplicationsForSeeker(user.id);
+  const applications = await listApplicationsForSeeker(user.id);
 
   return (
     <div className="space-y-6">

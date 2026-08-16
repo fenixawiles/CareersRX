@@ -9,7 +9,7 @@ export async function GET() {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
   if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
-  return NextResponse.json({ applications: listApplicationsForSeeker(user.id) });
+  return NextResponse.json({ applications: await listApplicationsForSeeker(user.id) });
 }
 
 export async function POST(request: Request) {
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   if (!body || typeof body.jobId !== "string" || typeof body.licenseConfirmed !== "boolean") {
     return NextResponse.json({ error: "Job and license confirmation are required" }, { status: 400 });
   }
-  const result = createApplication({
+  const result = await createApplication({
     jobId: body.jobId,
     seekerUserId: user.id,
     seekerEmail: user.email,

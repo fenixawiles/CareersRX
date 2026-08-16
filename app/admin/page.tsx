@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { connection } from "next/server";
-import { Building2, Briefcase, Flag, Users, ArrowRight } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { Building2, Briefcase, Users, ArrowRight } from "lucide-react";
+import { adminOverview } from "@/lib/admin/queries";
 import { DashboardHeading, StatCard, Card } from "@/components/dashboard/DashboardUI";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
 import { requireAdmin } from "@/lib/auth/policy";
@@ -10,28 +10,16 @@ export default async function AdminOverview() {
   await requireAdmin();
   await connection();
 
-  const [pendingEmployers, pendingJobs, openReports, totalUsers, recentCompanies] =
-    await Promise.all([
-      prisma.company.count({ where: { verificationStatus: "PENDING" } }),
-      prisma.job.count({ where: { status: "PENDING_REVIEW" } }),
-      prisma.jobReport.count({ where: { resolved: false } }),
-      prisma.user.count(),
-      prisma.company.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        include: { _count: { select: { jobs: true } } },
-      }),
-    ]);
+  const overview = await adminOverview();
 
   return (
     <div className="space-y-6">
       <DashboardHeading title="Admin dashboard" description="Platform health at a glance." />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Pending employers" value={pendingEmployers} icon={Building2} />
-        <StatCard label="Jobs to review" value={pendingJobs} icon={Briefcase} />
-        <StatCard label="Open reports" value={openReports} icon={Flag} />
-        <StatCard label="Total users" value={totalUsers} icon={Users} />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard label="Employers" value={overview.companyCount} icon={Building2} />
+        <StatCard label="Unpublished jobs" value={overview.unpublishedJobCount} icon={Briefcase} />
+        <StatCard label="Total users" value={overview.userCount} icon={Users} />
       </div>
 
       <Card>
@@ -45,18 +33,18 @@ export default async function AdminOverview() {
           </Link>
         </div>
         <ul className="mt-4 divide-y divide-border">
-          {recentCompanies.map((c) => (
-            <li key={c.id} className="flex items-center justify-between gap-3 py-3">
+          {overview.recentCompanies.map((company) => (
+            <li key={company.id} className="flex items-center justify-between gap-3 py-3">
               <div>
                 <Link
-                  href={`/admin/employers/${c.id}`}
+                  href={`/admin/employers/${company.id}`}
                   className="font-medium text-foreground hover:text-primary"
                 >
-                  {c.name}
+                  {company.name}
                 </Link>
-                <p className="text-sm text-muted">{c._count.jobs} jobs</p>
+                <p className="text-sm text-muted">{company.jobCount} jobs</p>
               </div>
-              <CompanyStatusBadge status={c.verificationStatus} />
+              <CompanyStatusBadge status={company.verificationStatus} />
             </li>
           ))}
         </ul>

@@ -145,8 +145,7 @@ export type SandboxSnapshot = {
   versions: SandboxVersion[];
   audit: SandboxAuditEntry[];
   persistence: {
-    kind: "sqlite";
-    path: string;
+    kind: "postgres";
   };
 };
 

@@ -8,7 +8,7 @@ import { getCompanyForUser } from "@/lib/local-platform";
 export default async function EmployerAccountPage() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "EMPLOYER") redirect("/login?next=/dashboard/employer/account");
-  const company = getCompanyForUser(user.id);
+  const company = await getCompanyForUser(user.id);
 
   return (
     <div className="space-y-6">

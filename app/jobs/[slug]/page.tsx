@@ -30,7 +30,7 @@ type Params = Promise<{ slug: string }>;
 export const dynamic = "force-dynamic";
 
 async function getJob(slug: string) {
-  return getPublicJobBySlug(slug);
+  return await getPublicJobBySlug(slug);
 }
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
@@ -53,8 +53,8 @@ export default async function JobDetailPage({ params }: { params: Params }) {
 
   const salary = formatSalaryRange(job);
   const user = await getCurrentLocalUser();
-  const saved = user?.role === "SEEKER" ? isJobSaved(user.id, job.id) : false;
-  const relatedJobs = listRelatedPublicJobs(job);
+  const saved = user?.role === "SEEKER" ? await isJobSaved(user.id, job.id) : false;
+  const relatedJobs = await listRelatedPublicJobs(job);
 
   return (
     <>

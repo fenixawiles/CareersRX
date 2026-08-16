@@ -8,8 +8,8 @@ import { JOB_CATEGORIES, FOCUS_STATES } from "@/lib/constants";
 
 export default async function HomePage() {
   await connection();
-  const { jobs: featuredJobs } = listPublicJobs({ page: 1, pageSize: 6 });
-  const { jobCount, companyCount } = getPublicJobStats();
+  const { jobs: featuredJobs } = await listPublicJobs({ page: 1, pageSize: 6 });
+  const { jobCount, companyCount } = await getPublicJobStats();
 
   return (
     <>

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 export default async function SeekerSaved() {
   const user = await getCurrentLocalUser();
   if (!user || user.role !== "SEEKER") redirect("/login?next=/dashboard/seeker/saved");
-  const saved = listSavedJobsForSeeker(user.id);
+  const saved = await listSavedJobsForSeeker(user.id);
 
   return (
     <div className="space-y-6">

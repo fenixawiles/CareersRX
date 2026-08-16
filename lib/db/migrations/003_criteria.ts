@@ -1,34 +1,36 @@
-import type { SqliteConnection } from "@/lib/db/connection";
+import type { Migration } from "@/lib/db/migrate";
+import { forbid } from "@/lib/db/migrations/util";
 
-export const criteriaMigration = {
+export const criteriaMigration: Migration = {
   version: 3,
   name: "criteria",
-  checksum: "sha256:3182e7c121042698192f590d441bda3141ad2f41d7b5271d3a524447ce2fe2dd",
-  up(connection: SqliteConnection) {
-    connection.exec(`
+  checksum: "sha256:pg-criteria-v1",
+  async up(client) {
+    await client.exec(`
       CREATE TABLE auto_enforceable_rule_templates (
         id TEXT PRIMARY KEY,
         label TEXT NOT NULL,
         legal_basis TEXT NOT NULL
       );
 
-      INSERT OR IGNORE INTO auto_enforceable_rule_templates (id, label, legal_basis) VALUES
+      INSERT INTO auto_enforceable_rule_templates (id, label, legal_basis) VALUES
         ('LICENSE_ATTESTATION', 'Professional license attestation', 'Applicant attestation of a legally required credential'),
         ('CERTIFICATION_ATTESTATION', 'Required certification attestation', 'Applicant attestation of a legally required credential'),
         ('WORK_AUTHORIZATION_ATTESTATION', 'Work authorization attestation', 'Applicant attestation of a legally required condition'),
-        ('LEGAL_MINIMUM_AGE', 'Legal minimum age', 'Statutory minimum age for the role');
+        ('LEGAL_MINIMUM_AGE', 'Legal minimum age', 'Statutory minimum age for the role')
+      ON CONFLICT (id) DO NOTHING;
 
       CREATE TABLE job_criteria_sets (
         id TEXT PRIMARY KEY,
-        job_id TEXT NOT NULL REFERENCES local_jobs(id),
+        job_id TEXT NOT NULL REFERENCES jobs(id),
         version INTEGER NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('DRAFT', 'PUBLISHED', 'SUPERSEDED')),
         authoring_state TEXT NOT NULL CHECK (authoring_state IN ('STRUCTURED', 'UNSTRUCTURED')),
-        published_at TEXT,
-        published_by_user_id TEXT REFERENCES local_users(id),
-        superseded_at TEXT,
+        published_at TIMESTAMPTZ,
+        published_by_user_id TEXT REFERENCES users(id),
+        superseded_at TIMESTAMPTZ,
         superseded_by_set_id TEXT REFERENCES job_criteria_sets(id),
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         UNIQUE(job_id, version)
       );
       CREATE UNIQUE INDEX job_criteria_sets_one_draft_per_job
@@ -46,14 +48,14 @@ export const criteriaMigration = {
         label TEXT NOT NULL,
         statement TEXT NOT NULL,
         rule_template_id TEXT REFERENCES auto_enforceable_rule_templates(id),
-        deterministic_rule_json TEXT,
-        requires_human_review INTEGER NOT NULL DEFAULT 0 CHECK (requires_human_review IN (0, 1)),
-        auto_enforceable INTEGER NOT NULL DEFAULT 0 CHECK (auto_enforceable IN (0, 1)),
-        created_at TEXT NOT NULL,
+        deterministic_rule_json JSONB,
+        requires_human_review BOOLEAN NOT NULL DEFAULT FALSE,
+        auto_enforceable BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL,
         UNIQUE(criteria_set_id, ordinal),
         CHECK (kind <> 'PREFERRED_QUALIFICATION' OR disposition = 'PREFERRED'),
-        CHECK (kind <> 'HUMAN_JUDGMENT' OR (evaluation_mode = 'HUMAN_ONLY' AND auto_enforceable = 0)),
-        CHECK (auto_enforceable = 0 OR (
+        CHECK (kind <> 'HUMAN_JUDGMENT' OR (evaluation_mode = 'HUMAN_ONLY' AND NOT auto_enforceable)),
+        CHECK (NOT auto_enforceable OR (
           kind = 'HARD_ELIGIBILITY' AND disposition = 'MANDATORY' AND
           evaluation_mode = 'DETERMINISTIC' AND rule_template_id IS NOT NULL
         ))
@@ -76,23 +78,41 @@ export const criteriaMigration = {
         criterion_id TEXT NOT NULL REFERENCES job_criteria(id),
         PRIMARY KEY(alternative_id, criterion_id)
       );
+    `);
 
-      CREATE TRIGGER job_criteria_no_edit_after_publish
-      BEFORE UPDATE ON job_criteria
-      WHEN (SELECT status FROM job_criteria_sets WHERE id = OLD.criteria_set_id) <> 'DRAFT'
-      BEGIN SELECT RAISE(ABORT, 'published criteria are immutable'); END;
-      CREATE TRIGGER job_criteria_no_delete_after_publish
-      BEFORE DELETE ON job_criteria
-      WHEN (SELECT status FROM job_criteria_sets WHERE id = OLD.criteria_set_id) <> 'DRAFT'
-      BEGIN SELECT RAISE(ABORT, 'published criteria are immutable'); END;
-      CREATE TRIGGER job_criteria_sets_no_edit_after_publish
-      BEFORE UPDATE ON job_criteria_sets
-      WHEN OLD.status = 'PUBLISHED' AND NOT (
+    // The SQLite original guarded UPDATE/DELETE only; INSERT into a published set is equally a
+    // mutation of published criteria and is now blocked at the same layer.
+    await client.exec(forbid({
+      name: "job_criteria_no_insert_after_publish",
+      table: "job_criteria",
+      operation: "INSERT",
+      when: "(SELECT status FROM job_criteria_sets WHERE id = NEW.criteria_set_id) <> 'DRAFT'",
+      message: "published criteria are immutable",
+    }));
+    await client.exec(forbid({
+      name: "job_criteria_no_edit_after_publish",
+      table: "job_criteria",
+      operation: "UPDATE",
+      when: "(SELECT status FROM job_criteria_sets WHERE id = OLD.criteria_set_id) <> 'DRAFT'",
+      message: "published criteria are immutable",
+    }));
+    await client.exec(forbid({
+      name: "job_criteria_no_delete_after_publish",
+      table: "job_criteria",
+      operation: "DELETE",
+      when: "(SELECT status FROM job_criteria_sets WHERE id = OLD.criteria_set_id) <> 'DRAFT'",
+      message: "published criteria are immutable",
+    }));
+    await client.exec(forbid({
+      name: "job_criteria_sets_no_edit_after_publish",
+      table: "job_criteria_sets",
+      operation: "UPDATE",
+      when: `OLD.status = 'PUBLISHED' AND NOT (
         NEW.status IN ('PUBLISHED', 'SUPERSEDED') AND
         NEW.job_id = OLD.job_id AND NEW.version = OLD.version AND
         NEW.authoring_state = OLD.authoring_state AND NEW.created_at = OLD.created_at
-      )
-      BEGIN SELECT RAISE(ABORT, 'published criteria are immutable'); END;
-    `);
+      )`,
+      message: "published criteria are immutable",
+    }));
   },
 };

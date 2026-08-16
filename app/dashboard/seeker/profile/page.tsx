@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { DashboardHeading } from "@/components/dashboard/DashboardUI";
 import { PublicProfilePreview } from "@/components/profile/PublicProfilePreview";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
+import { getSandboxSnapshot } from "@/lib/resume/store";
 
 export default async function SeekerProfilePage() {
   const user = await getCurrentLocalUser();
@@ -16,7 +16,7 @@ export default async function SeekerProfilePage() {
       />
 
       <PublicProfilePreview
-        snapshot={getSandboxSnapshot(sandboxIdForUser(user.id))}
+        snapshot={await getSandboxSnapshot(sandboxIdForUser(user.id))}
         resumeHref="/dashboard/seeker/resume"
         signupHref="/dashboard/seeker/account"
         signupLabel="Account Settings"

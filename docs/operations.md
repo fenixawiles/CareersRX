@@ -1,5 +1,17 @@
 # CareersRX operations
 
+## Database
+
+CareersRX runs on PostgreSQL. `DATABASE_URL` is required at runtime; the process refuses to open
+the database during `next build` (pages that read data are dynamic). Migrations are code-defined in
+`lib/db/migrations/` and run automatically on first query per process under a Postgres advisory
+lock, so concurrent boots (deploys, restarts) serialize their migration runs. Migrations are
+forward-only; rely on managed-Postgres snapshots for rollback.
+
+Local development: `createdb careersrx` (and `createdb careersrx_test` for Vitest) on a local
+PostgreSQL 14+, then set `DATABASE_URL=postgres://<user>@localhost:5432/careersrx`. Tests create an
+isolated schema per case on `careersrx_test` (`DATABASE_URL_TEST` overrides the default).
+
 ## Production configuration
 
 Set `CAREERSRX_ALLOWED_ORIGINS` to a comma-separated allowlist of full origins. The server refuses to load the protected mutation layer in production without it; request `Host` headers are never used as a production fallback.

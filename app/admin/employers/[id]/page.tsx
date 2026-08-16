@@ -1,37 +1,21 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
-import { ArrowLeft, MapPin, Check, X } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { ArrowLeft } from "lucide-react";
+import { adminCompanyById } from "@/lib/admin/queries";
 import { DashboardHeading, Card } from "@/components/dashboard/DashboardUI";
 import { CompanyStatusBadge } from "@/components/jobs/StatusBadge";
-import { Button } from "@/components/ui/Button";
-import { FACILITY_TYPE_LABELS } from "@/lib/constants";
+import { Badge } from "@/components/ui/Badge";
 import { requireAdmin } from "@/lib/auth/policy";
 
 type Params = Promise<{ id: string }>;
-
-const CHECKLIST = [
-  "Real, identifiable community",
-  "Valid contact information",
-  "Facility address verified",
-  "No scam indicators",
-];
 
 export default async function AdminEmployerDetail({ params }: { params: Params }) {
   await requireAdmin();
   await connection();
 
   const { id } = await params;
-  const company = await prisma.company.findUnique({
-    where: { id },
-    include: {
-      facilities: true,
-      users: { include: { user: true }, where: { revokedAt: null } },
-      _count: { select: { jobs: true } },
-    },
-  });
-
+  const company = await adminCompanyById(id);
   if (!company) notFound();
 
   return (
@@ -53,63 +37,31 @@ export default async function AdminEmployerDetail({ params }: { params: Params }
           <Card>
             <h2 className="font-semibold text-foreground">Details</h2>
             <dl className="mt-3 space-y-2 text-sm">
-              <Row label="Website" value={company.website ?? "—"} />
+              <Row label="Website" value={company.website || "—"} />
               <Row label="Email" value={company.contactEmail} />
-              <Row label="Phone" value={company.phone ?? "—"} />
-              <Row label="Jobs posted" value={String(company._count.jobs)} />
+              <Row label="Phone" value={company.phone || "—"} />
+              <Row label="Jobs posted" value={String(company.jobCount)} />
             </dl>
             {company.description ? (
-              <p className="mt-3 text-sm text-muted">{company.description}</p>
+              <p className="mt-3 whitespace-pre-wrap text-sm text-foreground">{company.description}</p>
             ) : null}
-          </Card>
-
-          <Card>
-            <h2 className="font-semibold text-foreground">Facilities</h2>
-            <div className="mt-3 space-y-2">
-              {company.facilities.map((f) => (
-                <div key={f.id} className="flex items-start justify-between gap-3 text-sm">
-                  <span className="inline-flex items-center gap-1.5 text-muted">
-                    <MapPin size={14} /> {f.name} — {f.city}, {f.state}
-                  </span>
-                  <span className="text-xs text-muted">{FACILITY_TYPE_LABELS[f.type]}</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card>
-            <h2 className="font-semibold text-foreground">Team</h2>
-            <ul className="mt-3 space-y-1 text-sm text-muted">
-              {company.users.map((u) => (
-                <li key={u.id}>
-                  {u.user.name ?? u.user.email} — {u.role}
-                </li>
-              ))}
-            </ul>
           </Card>
         </div>
 
-        <aside className="space-y-4">
-          <Card>
-            <h2 className="font-semibold text-foreground">Verification checklist</h2>
-            <ul className="mt-3 space-y-2 text-sm">
-              {CHECKLIST.map((item) => (
-                <li key={item} className="flex items-center gap-2">
-                  <input type="checkbox" defaultChecked={company.verificationStatus === "APPROVED"} />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-4 flex flex-col gap-2">
-              <Button size="sm">
-                <Check size={15} /> Approve
-              </Button>
-              <Button variant="outline" size="sm">
-                <X size={15} /> Reject
-              </Button>
-            </div>
-          </Card>
-        </aside>
+        <Card>
+          <h2 className="font-semibold text-foreground">Team</h2>
+          <ul className="mt-3 space-y-3">
+            {company.members.map((member) => (
+              <li key={member.email} className="flex items-center justify-between gap-2 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-foreground">{member.fullName}</p>
+                  <p className="truncate text-muted">{member.email}</p>
+                </div>
+                <Badge tone="neutral">{member.role}</Badge>
+              </li>
+            ))}
+          </ul>
+        </Card>
       </div>
     </div>
   );

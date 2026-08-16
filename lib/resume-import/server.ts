@@ -16,7 +16,7 @@ import {
   createSandboxResumeImport,
   getSandboxSnapshot,
   writeSandboxAiInteraction,
-} from "@/lib/sqlite-sandbox";
+} from "@/lib/resume/store";
 
 type ImportMode = "account" | "signup";
 
@@ -135,7 +135,7 @@ export async function runResumeImport({
   demoMode: boolean;
 }> {
   const extraction = await extractResumeTextFromFile(file);
-  const snapshot = mode === "signup" ? null : getSandboxSnapshot(sandboxId);
+  const snapshot = mode === "signup" || !sandboxId ? null : await getSandboxSnapshot(sandboxId);
   const profile = snapshot?.profile ?? blankImportProfile();
   const resume = snapshot?.resume ?? blankImportResume();
   const ai = await parseUploadedResumeWithRex({
@@ -150,7 +150,7 @@ export async function runResumeImport({
 
   let interactionId: string | undefined;
   if (mode !== "signup") {
-    interactionId = writeSandboxAiInteraction({
+    interactionId = await writeSandboxAiInteraction({
       sandboxId,
       task: "REX_PARSE_UPLOADED_RESUME",
       model: ai.model,
@@ -173,9 +173,9 @@ export async function runResumeImport({
   }
 
   const resumeImport =
-    mode === "signup"
+    mode === "signup" || !sandboxId
       ? null
-      : createSandboxResumeImport(
+      : await createSandboxResumeImport(
           {
             fileName: extraction.fileName,
             contentType: extraction.contentType,

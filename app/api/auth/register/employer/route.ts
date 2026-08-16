@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = createLocalEmployerAccount({
+  const result = await createLocalEmployerAccount({
     companyName: body.companyName,
     contactName: body.contactName,
     email: body.email,
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
-  const session = createLocalSession(result.user.id);
+  const session = await createLocalSession(result.user.id);
   const response = NextResponse.json(
     { user: result.user, company: result.company, dashboardPath: dashboardPathForUser(result.user) },
     { status: 201 },

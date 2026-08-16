@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteCriterion, updateCriterion, type CriterionPatchInput } from "@/lib/criteria/authoring";
 import { withApiHandler } from "@/lib/evaluation/http";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +14,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Criterion update must be a JSON object", code: "INVALID_INPUT" }, { status: 422 });
     }
     const { id, cid } = await routeContext.params;
-    const criterion = updateCriterion(evaluationDbPath(), actor, id, cid, body as CriterionPatchInput);
+    const criterion = await updateCriterion(actor, id, cid, body as CriterionPatchInput);
     return NextResponse.json({ criterion });
   });
 }
@@ -23,7 +22,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 export async function DELETE(request: Request, context: RouteContext) {
   return withApiHandler(request, context, async ({ actor, context: routeContext }) => {
     const { id, cid } = await routeContext.params;
-    deleteCriterion(evaluationDbPath(), actor, id, cid);
+    await deleteCriterion(actor, id, cid);
     return new NextResponse(null, { status: 204 });
   });
 }

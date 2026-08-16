@@ -1,8 +1,6 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { queryFile, runFile } from "../lib/db/sql";
+import { freshDatabase } from "./harness";
+import { query, run } from "../lib/db/sql";
 import {
   completeEvaluationRun,
   EvaluationPersistenceError,
@@ -15,47 +13,37 @@ import {
 import { getApplicantApplicationDetail, getReleasedApplicantExplanation } from "../lib/evaluation/applicant-read";
 import { pseudonymizeApplication } from "../lib/retention/pseudonymize";
 
-function temporaryDatabasePath() {
-  return join(mkdtempSync(join(tmpdir(), "careersrx-evaluation-test-")), "test.sqlite");
-}
-
-function seedEvaluationCase(dbPath: string) {
+async function seedEvaluationCase() {
   const now = "2026-08-13T00:00:00.000Z";
-  runFile(
-    dbPath,
-    `INSERT INTO local_users (id, email, password_hash, first_name, last_name, full_name, role, is_admin, created_at, updated_at)
+  await run(
+    `INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, is_admin, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       "employer", "employer@example.test", "hash", "Employer", "User", "Employer User", "EMPLOYER", 0, now, now,
       "seeker", "seeker@example.test", "hash", "Seeker", "User", "Seeker User", "SEEKER", 0, now, now,
     ],
   );
-  runFile(
-    dbPath,
-    `INSERT INTO local_companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at)
+  await run(
+    `INSERT INTO companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ["company", "Example Care", "example-care", "Employer User", "employer@example.test", "APPROVED", now, now],
   );
-  runFile(
-    dbPath,
-    "INSERT INTO local_company_users (id, company_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
+  await run(
+    "INSERT INTO company_users (id, company_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
     ["membership", "company", "employer", "OWNER", now],
   );
-  runFile(
-    dbPath,
-    `INSERT INTO local_jobs (id, company_id, slug, title, category, job_type, shifts_json, city, state, zip, description,
+  await run(
+    `INSERT INTO jobs (id, company_id, slug, title, category, job_type, shifts_json, city, state, zip, description,
        requirements, benefits, show_salary, eeo_statement, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ["job", "company", "rn", "RN", "Nursing", "FULL_TIME", "[]", "Chicago", "IL", "", "Role", "", "", 0, "", "ACTIVE", now, now],
   );
-  runFile(
-    dbPath,
+  await run(
     `INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at)
      VALUES (?, ?, ?, 'DRAFT', 'STRUCTURED', ?)`,
     ["criteria", "job", 1, now],
   );
-  runFile(
-    dbPath,
+  await run(
     `INSERT INTO job_criteria (
        id, criteria_set_id, ordinal, kind, disposition, evaluation_mode, label, statement,
        rule_template_id, requires_human_review, auto_enforceable, created_at
@@ -65,10 +53,9 @@ function seedEvaluationCase(dbPath: string) {
       "experience", "criteria", 2, "MINIMUM_QUALIFICATION", "MANDATORY", "EVIDENCE_MAPPING", "Experience", "Relevant clinical experience", null, 0, 0, now,
     ],
   );
-  runFile(dbPath, "UPDATE job_criteria_sets SET status = 'PUBLISHED', published_at = ? WHERE id = ?", [now, "criteria"]);
-  runFile(
-    dbPath,
-    `INSERT INTO local_applications (
+  await run("UPDATE job_criteria_sets SET status = 'PUBLISHED', published_at = ? WHERE id = ?", [now, "criteria"]);
+  await run(
+    `INSERT INTO applications (
       id, job_id, seeker_user_id, seeker_name, seeker_email, seeker_headline, seeker_location,
       cover_letter, license_confirmed, profile_snapshot_json, resume_snapshot_json, criteria_set_id,
       resume_revision_id, snapshot_hash, submitted_at, evaluation_state, disposition_state,
@@ -84,10 +71,10 @@ function seedEvaluationCase(dbPath: string) {
 }
 
 describe("evaluation persistence", () => {
-  it("stores a scoped run, downgrades an unsupported model satisfaction, and locks it when a grounded decision is made", () => {
-    const dbPath = temporaryDatabasePath();
-    const actor = seedEvaluationCase(dbPath);
-    const run = startEvaluationRun(dbPath, actor, {
+  it("stores a scoped run, downgrades an unsupported model satisfaction, and locks it when a grounded decision is made", async () => {
+    await freshDatabase();
+    const actor = await seedEvaluationCase();
+    const evaluationRun = await startEvaluationRun(actor, {
       applicationId: "application",
       evaluator: "MODEL",
       modelName: "test-model",
@@ -96,7 +83,7 @@ describe("evaluation persistence", () => {
       schemaVersion: "v1",
     });
 
-    const findings = recordEvaluationFindings(dbPath, actor, run.id, [
+    const findings = await recordEvaluationFindings(actor, evaluationRun.id, [
       {
         criterionId: "license",
         origin: "DETERMINISTIC_RULE",
@@ -112,58 +99,60 @@ describe("evaluation persistence", () => {
         evidenceSource: "RESUME_STATED",
       },
     ]);
-    expect(queryFile<{ assessment_state: string }>(dbPath, "SELECT assessment_state FROM criterion_findings WHERE criterion_id = ?", ["experience"])[0])
+    expect((await query<{ assessment_state: string }>("SELECT assessment_state FROM criterion_findings WHERE criterion_id = ?", ["experience"]))[0])
       .toEqual({ assessment_state: "INSUFFICIENT_EVIDENCE" });
 
-    completeEvaluationRun(dbPath, actor, { evaluationId: run.id, state: "COMPLETE" });
-    expect(() => recordEvaluationFindings(dbPath, actor, run.id, [])).toThrow(EvaluationPersistenceError);
+    await completeEvaluationRun(actor, { evaluationId: evaluationRun.id, state: "COMPLETE" });
+    await expect(async () => await recordEvaluationFindings(actor, evaluationRun.id, [])).rejects.toThrow(EvaluationPersistenceError);
 
-    const decision = recordEmployerDecision(dbPath, actor, {
+    const decision = await recordEmployerDecision(actor, {
       applicationId: "application",
-      evaluationId: run.id,
+      evaluationId: evaluationRun.id,
       decision: "DO_NOT_ADVANCE",
       reasonCategory: "MANDATORY_CRITERION_NOT_MET",
       findingIds: [findings.findingIds[0]!],
     });
     expect(decision.disposition).toBe("NOT_ADVANCED");
-    expect(queryFile<{ locked_by_decision_id: string }>(dbPath, "SELECT locked_by_decision_id FROM application_evaluations WHERE id = ?", [run.id])[0])
+    expect((await query<{ locked_by_decision_id: string }>("SELECT locked_by_decision_id FROM application_evaluations WHERE id = ?", [evaluationRun.id]))[0])
       .toEqual({ locked_by_decision_id: decision.id });
-    expect(queryFile<{ current_decision_id: string; disposition_state: string }>(dbPath, "SELECT current_decision_id, disposition_state FROM local_applications WHERE id = ?", ["application"])[0])
+    expect((await query<{ current_decision_id: string; disposition_state: string }>("SELECT current_decision_id, disposition_state FROM applications WHERE id = ?", ["application"]))[0])
       .toEqual({ current_decision_id: decision.id, disposition_state: "NOT_ADVANCED" });
-    expect(queryFile<{ type: string; recipient_user_id: string }>(dbPath, "SELECT type, recipient_user_id FROM notifications")).toEqual([]);
-    expect(queryFile<{ decision_id: string; released_at: string | null; rendered_text: string }>(dbPath, "SELECT decision_id, released_at, rendered_text FROM applicant_explanations")[0])
+    expect(await query<{ type: string; recipient_user_id: string }>("SELECT type, recipient_user_id FROM notifications")).toEqual([]);
+    expect((await query<{ decision_id: string; released_at: string | null; rendered_text: string }>("SELECT decision_id, released_at, rendered_text FROM applicant_explanations"))[0])
       .toEqual(expect.objectContaining({ decision_id: decision.id, released_at: null, rendered_text: expect.stringContaining("mandatory requirement") }));
-    expect(getApplicantApplicationDetail(dbPath, "seeker", "application")).toMatchObject({
+    expect(await getApplicantApplicationDetail("seeker", "application")).toMatchObject({
       dispositionState: "NOT_ADVANCED",
       criteriaSet: { id: "criteria", status: "PUBLISHED", authoringState: "STRUCTURED" },
     });
-    expect(getReleasedApplicantExplanation(dbPath, "seeker", "application")).toBeNull();
+    expect(await getReleasedApplicantExplanation("seeker", "application")).toBeNull();
 
-    const released = releaseApplicantExplanation(dbPath, actor, "application");
+    const released = await releaseApplicantExplanation(actor, "application");
     expect(released).toMatchObject({ releasedAt: expect.any(String), notificationId: expect.any(String) });
-    expect(queryFile<{ type: string; recipient_user_id: string }>(dbPath, "SELECT type, recipient_user_id FROM notifications")[0])
+    expect((await query<{ type: string; recipient_user_id: string }>("SELECT type, recipient_user_id FROM notifications"))[0])
       .toEqual({ type: "DECISION_AVAILABLE", recipient_user_id: "seeker" });
-    expect(getReleasedApplicantExplanation(dbPath, "seeker", "application")).toEqual(expect.objectContaining({
+    expect(await getReleasedApplicantExplanation("seeker", "application")).toEqual(expect.objectContaining({
       decisionId: decision.id,
       renderedText: expect.stringContaining("mandatory requirement"),
     }));
-    expect(() => runFile(dbPath, "UPDATE applicant_explanations SET rendered_text = ?", ["changed"])).toThrow(
+    await expect(async () => await run("UPDATE applicant_explanations SET rendered_text = ?", ["changed"])).rejects.toThrow(
       "applicant explanations are immutable after release",
     );
-    expect(queryFile<{ state: string; channel: string }>(dbPath, "SELECT state, channel FROM notification_outbox")[0])
+    expect((await query<{ state: string; channel: string }>("SELECT state, channel FROM notification_outbox"))[0])
       .toEqual({ state: "PENDING", channel: "EMAIL" });
-    expect(pseudonymizeApplication(dbPath, "application")).toBe(true);
-    expect(queryFile<{ profile_snapshot_json: string; pseudonymized_at: string | null }>(dbPath, "SELECT profile_snapshot_json, pseudonymized_at FROM local_applications WHERE id = ?", ["application"])[0])
-      .toEqual({ profile_snapshot_json: '{"redacted":true}', pseudonymized_at: expect.any(String) });
-    expect(pseudonymizeApplication(dbPath, "application")).toBe(false);
+    expect(await pseudonymizeApplication("application")).toBe(true);
+    expect((await query<{ profile_snapshot_json: string; pseudonymized_at: string | null }>("SELECT profile_snapshot_json, pseudonymized_at FROM applications WHERE id = ?", ["application"]))[0])
+      .toEqual({ profile_snapshot_json: expect.any(String), pseudonymized_at: expect.any(String) });
+    expect(JSON.parse((await query<{ profile_snapshot_json: string }>("SELECT profile_snapshot_json FROM applications WHERE id = ?", ["application"]))[0]!.profile_snapshot_json))
+      .toEqual({ redacted: true });
+    expect(await pseudonymizeApplication("application")).toBe(false);
   });
 
-  it("rejects ungrounded model deficiencies and cross-organization access", () => {
-    const dbPath = temporaryDatabasePath();
-    const actor = seedEvaluationCase(dbPath);
-    const run = startEvaluationRun(dbPath, actor, { applicationId: "application", evaluator: "MODEL" });
-    expect(() =>
-      recordEvaluationFindings(dbPath, actor, run.id, [
+  it("rejects ungrounded model deficiencies and cross-organization access", async () => {
+    await freshDatabase();
+    const actor = await seedEvaluationCase();
+    const evaluationRun = await startEvaluationRun(actor, { applicationId: "application", evaluator: "MODEL" });
+    await expect(async () =>
+      await recordEvaluationFindings(actor, evaluationRun.id, [
         {
           criterionId: "experience",
           origin: "MODEL",
@@ -172,8 +161,8 @@ describe("evaluation persistence", () => {
           evidenceSource: "RESUME_STATED",
         },
       ]),
-    ).toThrow("A model cannot record an applicant deficiency.");
-    expect(() => startEvaluationRun(dbPath, { ...actor, companyId: "another-company" }, { applicationId: "application", evaluator: "SYSTEM" }))
-      .toThrow("active organization membership");
+    ).rejects.toThrow("A model cannot record an applicant deficiency.");
+    await expect(async () => await startEvaluationRun({ ...actor, companyId: "another-company" }, { applicationId: "application", evaluator: "SYSTEM" }))
+      .rejects.toThrow("active organization membership");
   });
 });

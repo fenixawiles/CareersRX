@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Full name is required" }, { status: 400 });
   }
 
-  const result = createLocalSeekerAccount({
+  const result = await createLocalSeekerAccount({
     email: body.email,
     password: body.password,
     firstName: typeof body.firstName === "string" ? body.firstName : "",
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
-  const session = createLocalSession(result.user.id);
+  const session = await createLocalSession(result.user.id);
   const response = NextResponse.json(
     { user: result.user, dashboardPath: dashboardPathForUser(result.user) },
     { status: 201 },

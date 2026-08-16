@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { answerResumeImportFollowupWithRex } from "@/lib/ai/openai";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { getSandboxResumeImport, getSandboxSnapshot, writeSandboxAiInteraction } from "@/lib/sqlite-sandbox";
+import { getSandboxResumeImport, getSandboxSnapshot, writeSandboxAiInteraction } from "@/lib/resume/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,10 +17,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: "Import follow-up messages are limited to 500 characters." }, { status: 400 });
   }
   const sandboxId = sandboxIdForUser(user.id);
-  const resumeImport = getSandboxResumeImport(id, sandboxId);
+  const resumeImport = await getSandboxResumeImport(id, sandboxId);
   if (!resumeImport) return NextResponse.json({ error: "Resume import not found." }, { status: 404 });
 
-  const snapshot = getSandboxSnapshot(sandboxId);
+  const snapshot = await getSandboxSnapshot(sandboxId);
   const ai = await answerResumeImportFollowupWithRex({
     message: body.message.trim(),
     resumeImport,
@@ -28,7 +28,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     resume: snapshot.resume,
     mode: "account",
   });
-  writeSandboxAiInteraction({
+  await writeSandboxAiInteraction({
     sandboxId,
     task: "REX_RESUME_IMPORT_FOLLOWUP",
     model: ai.model,

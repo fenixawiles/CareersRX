@@ -3,13 +3,13 @@ import { FilePenLine, UserRound, BriefcaseBusiness } from "lucide-react";
 import { DashboardHeading, StatCard, Card } from "@/components/dashboard/DashboardUI";
 import { Button } from "@/components/ui/Button";
 import { getCurrentLocalUser, sandboxIdForUser } from "@/lib/local-auth";
-import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
+import { getSandboxSnapshot } from "@/lib/resume/store";
 
 export default async function SeekerOverview() {
   const user = await getCurrentLocalUser();
   if (!user) redirect("/login?next=/dashboard/seeker");
 
-  const snapshot = getSandboxSnapshot(sandboxIdForUser(user.id));
+  const snapshot = await getSandboxSnapshot(sandboxIdForUser(user.id));
   const syncedSections = snapshot.resume.sections.filter((section) => section.syncStatus === "SYNCED").length;
   const pendingProposals = snapshot.proposals.filter((proposal) => proposal.status === "PENDING").length;
 

@@ -1,14 +1,10 @@
 import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
-import path from "node:path";
 import slugify from "slugify";
-import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
-import { transactionFile } from "@/lib/db/sql";
+import { query, queryOne, run, tx } from "@/lib/db/sql";
 import { runDeterministicEvaluationInTransaction } from "@/lib/evaluation/run";
-import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
-
-const dbPath = path.join(process.cwd(), "data", "careersrx-live-resume-sandbox.sqlite");
+import { getSandboxSnapshot } from "@/lib/resume/store";
 
 export type LocalCompany = {
   id: string;
@@ -104,23 +100,6 @@ function now() {
   return new Date().toISOString();
 }
 
-function sqlString(value: string | null) {
-  if (value === null) return "NULL";
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function sqlNumber(value: number | null) {
-  return value === null ? "NULL" : String(value);
-}
-
-function runSql(sql: string) {
-  runSqlFile(dbPath, sql);
-}
-
-function querySql<T>(sql: string): T[] {
-  return querySqlFile<T>(dbPath, sql);
-}
-
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -165,101 +144,18 @@ function slugBase(value: string) {
   );
 }
 
-function uniqueSlug(table: "local_companies" | "local_jobs", base: string, excludeId?: string) {
+async function uniqueSlug(table: "companies" | "jobs", base: string, excludeId?: string) {
   const root = slugBase(base);
   let candidate = root;
   let suffix = 2;
   while (true) {
-    const [row] = querySql<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM ${table} WHERE slug = ${sqlString(candidate)}${
-        excludeId ? ` AND id != ${sqlString(excludeId)}` : ""
-      }`,
-    );
-    if (!row?.count) return candidate;
+    const row = excludeId
+      ? await queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table} WHERE slug = ? AND id != ?`, [candidate, excludeId])
+      : await queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table} WHERE slug = ?`, [candidate]);
+    if (!Number(row?.count ?? 0)) return candidate;
     candidate = `${root}-${suffix}`;
     suffix += 1;
   }
-}
-
-export function initializeLocalPlatform() {
-  runSql(`
-    PRAGMA journal_mode = WAL;
-
-    CREATE TABLE IF NOT EXISTS local_companies (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
-      contact_name TEXT NOT NULL,
-      contact_email TEXT NOT NULL,
-      website TEXT NOT NULL DEFAULT '',
-      phone TEXT NOT NULL DEFAULT '',
-      description TEXT NOT NULL DEFAULT '',
-      verification_status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS local_company_users (
-      id TEXT PRIMARY KEY,
-      company_id TEXT NOT NULL,
-      user_id TEXT NOT NULL UNIQUE,
-      role TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS local_jobs (
-      id TEXT PRIMARY KEY,
-      company_id TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
-      title TEXT NOT NULL,
-      category TEXT NOT NULL,
-      facility_type TEXT,
-      job_type TEXT NOT NULL,
-      shifts_json TEXT NOT NULL,
-      city TEXT NOT NULL,
-      state TEXT NOT NULL,
-      zip TEXT NOT NULL,
-      description TEXT NOT NULL,
-      requirements TEXT NOT NULL,
-      benefits TEXT NOT NULL,
-      salary_min_cents INTEGER,
-      salary_max_cents INTEGER,
-      pay_type TEXT,
-      show_salary INTEGER NOT NULL,
-      eeo_statement TEXT NOT NULL,
-      status TEXT NOT NULL,
-      published_at TEXT,
-      expires_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS local_applications (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      seeker_user_id TEXT NOT NULL,
-      seeker_name TEXT NOT NULL,
-      seeker_email TEXT NOT NULL,
-      seeker_headline TEXT NOT NULL,
-      seeker_location TEXT NOT NULL,
-      cover_letter TEXT NOT NULL,
-      license_confirmed INTEGER NOT NULL,
-      profile_snapshot_json TEXT NOT NULL,
-      resume_snapshot_json TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(job_id, seeker_user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS local_saved_jobs (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      seeker_user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(job_id, seeker_user_id)
-    );
-  `);
 }
 
 function mapCompany(row: Row): LocalCompany {
@@ -285,7 +181,7 @@ function mapJob(row: Row): LocalJob {
     slug: String(row.slug ?? ""),
     title: String(row.title ?? ""),
     category: String(row.category ?? ""),
-    facilityType: row.facility_type === null ? null : String(row.facility_type ?? ""),
+    facilityType: row.facility_type == null ? null : String(row.facility_type),
     jobType: String(row.job_type ?? ""),
     shifts: parseJson<string[]>(row.shifts_json, []),
     city: String(row.city ?? ""),
@@ -296,8 +192,8 @@ function mapJob(row: Row): LocalJob {
     benefits: String(row.benefits ?? ""),
     salaryMinCents: row.salary_min_cents == null ? null : Number(row.salary_min_cents),
     salaryMaxCents: row.salary_max_cents == null ? null : Number(row.salary_max_cents),
-    payType: row.pay_type === null ? null : String(row.pay_type ?? ""),
-    showSalary: Number(row.show_salary ?? 0) === 1,
+    payType: row.pay_type == null ? null : String(row.pay_type),
+    showSalary: row.show_salary === true,
     signOnBonusCents: null,
     eeoStatement: String(row.eeo_statement ?? ""),
     status: String(row.status ?? "DRAFT") as LocalJobStatus,
@@ -326,7 +222,7 @@ function mapApplication(row: Row): LocalApplication {
     seekerHeadline: String(row.seeker_headline ?? ""),
     seekerLocation: String(row.seeker_location ?? ""),
     coverLetter: String(row.cover_letter ?? ""),
-    licenseConfirmed: Number(row.license_confirmed ?? 0) === 1,
+    licenseConfirmed: row.license_confirmed === true,
     status: String(row.application_status ?? row.status ?? "PENDING") as LocalApplication["status"],
     createdAt: new Date(String(row.application_created_at ?? row.created_at ?? now())),
     profileSnapshot: parseJson<Record<string, unknown>>(row.profile_snapshot_json, {}),
@@ -335,93 +231,79 @@ function mapApplication(row: Row): LocalApplication {
   };
 }
 
-function jobSelect(where: string, order = "j.created_at DESC") {
-  return querySql<Row>(`
-    SELECT
+async function jobSelect(whereSql: string, parameters: (string | number)[], order = "j.created_at DESC") {
+  const rows = await query<Row>(
+    `SELECT
       j.*,
       c.name AS company_name,
       c.slug AS company_slug,
       c.website AS company_website
-    FROM local_jobs j
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE ${where}
-    ORDER BY ${order}
-  `).map(mapJob);
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    WHERE ${whereSql}
+    ORDER BY ${order}`,
+    parameters,
+  );
+  return rows.map(mapJob);
 }
 
-export function createLocalCompanyForOwner(input: {
+export async function createLocalCompanyForOwner(input: {
   ownerUserId: string;
   companyName: string;
   contactName: string;
   contactEmail: string;
 }) {
-  initializeLocalPlatform();
   const timestamp = now();
   const companyId = randomBytes(16).toString("hex");
-  const company = {
-    id: companyId,
-    name: input.companyName.trim(),
-    slug: uniqueSlug("local_companies", input.companyName),
-    contactName: input.contactName.trim(),
-    contactEmail: input.contactEmail.trim().toLowerCase(),
-  };
+  const slug = await uniqueSlug("companies", input.companyName);
 
-  runSql(`
-    INSERT INTO local_companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at)
-    VALUES (${[
-      sqlString(company.id),
-      sqlString(company.name),
-      sqlString(company.slug),
-      sqlString(company.contactName),
-      sqlString(company.contactEmail),
-      sqlString("APPROVED"),
-      sqlString(timestamp),
-      sqlString(timestamp),
-    ].join(", ")});
-
-    INSERT INTO local_company_users (id, company_id, user_id, role, created_at)
-    VALUES (${[
-      sqlString(randomBytes(16).toString("hex")),
-      sqlString(company.id),
-      sqlString(input.ownerUserId),
-      sqlString("OWNER"),
-      sqlString(timestamp),
-    ].join(", ")});
-  `);
+  await tx(async () => {
+    await run(
+      "INSERT INTO companies (id, name, slug, contact_name, contact_email, verification_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)",
+      [companyId, input.companyName.trim(), slug, input.contactName.trim(), input.contactEmail.trim().toLowerCase(), timestamp, timestamp],
+    );
+    await run(
+      "INSERT INTO company_users (id, company_id, user_id, role, created_at) VALUES (?, ?, ?, 'OWNER', ?)",
+      [randomBytes(16).toString("hex"), companyId, input.ownerUserId, timestamp],
+    );
+  });
 
   return getCompanyForUser(input.ownerUserId);
 }
 
-export function getCompanyForUser(userId: string) {
-  initializeLocalPlatform();
-  const [row] = querySql<Row>(`
-    SELECT c.*
-    FROM local_companies c
-    JOIN local_company_users cu ON cu.company_id = c.id
-    WHERE cu.user_id = ${sqlString(userId)}
-    LIMIT 1
-  `);
+export async function getCompanyForUser(userId: string) {
+  const row = await queryOne<Row>(
+    `SELECT c.*
+    FROM companies c
+    JOIN company_users cu ON cu.company_id = c.id
+    WHERE cu.user_id = ? AND cu.revoked_at IS NULL
+    LIMIT 1`,
+    [userId],
+  );
   return row ? mapCompany(row) : null;
 }
 
-export function updateCompanyForUser(userId: string, input: Partial<LocalCompany>) {
-  const company = getCompanyForUser(userId);
+export async function updateCompanyForUser(userId: string, input: Partial<LocalCompany>) {
+  const company = await getCompanyForUser(userId);
   if (!company) return null;
   const name = text(input.name) || company.name;
-  const timestamp = now();
-  runSql(`
-    UPDATE local_companies
-    SET
-      name = ${sqlString(name)},
-      slug = ${sqlString(name === company.name ? company.slug : uniqueSlug("local_companies", name, company.id))},
-      website = ${sqlString(optionalText(input.website))},
-      phone = ${sqlString(optionalText(input.phone))},
-      description = ${sqlString(optionalText(input.description))},
-      contact_name = ${sqlString(text(input.contactName) || company.contactName)},
-      contact_email = ${sqlString(text(input.contactEmail).toLowerCase() || company.contactEmail)},
-      updated_at = ${sqlString(timestamp)}
-    WHERE id = ${sqlString(company.id)}
-  `);
+  const slug = name === company.name ? company.slug : await uniqueSlug("companies", name, company.id);
+  await run(
+    `UPDATE companies
+    SET name = ?, slug = ?, website = ?, phone = ?, description = ?, contact_name = ?, contact_email = ?, updated_at = ?
+    WHERE id = ?`,
+    [
+      name,
+      slug,
+      optionalText(input.website),
+      optionalText(input.phone),
+      optionalText(input.description),
+      text(input.contactName) || company.contactName,
+      text(input.contactEmail).toLowerCase() || company.contactEmail,
+      now(),
+      company.id,
+    ],
+  );
   return getCompanyForUser(userId);
 }
 
@@ -461,131 +343,127 @@ function normalizeJobInput(input: LocalJobInput) {
   };
 }
 
-export function listJobsForCompany(companyId: string) {
-  initializeLocalPlatform();
-  return jobSelect(`j.company_id = ${sqlString(companyId)}`, "j.updated_at DESC");
+export async function listJobsForCompany(companyId: string) {
+  return jobSelect("j.company_id = ?", [companyId], "j.updated_at DESC");
 }
 
-export function getJobForCompany(jobId: string, companyId: string) {
-  initializeLocalPlatform();
-  return jobSelect(`j.id = ${sqlString(jobId)} AND j.company_id = ${sqlString(companyId)}`, "j.created_at DESC")[0] ?? null;
+export async function getJobForCompany(jobId: string, companyId: string) {
+  return (await jobSelect("j.id = ? AND j.company_id = ?", [jobId, companyId]))[0] ?? null;
 }
 
-export function createJobForCompany(companyId: string, input: LocalJobInput) {
-  initializeLocalPlatform();
+export async function createJobForCompany(companyId: string, input: LocalJobInput) {
   const parsed = normalizeJobInput(input);
   if (!parsed.ok) return parsed;
   const timestamp = now();
   const jobId = randomBytes(16).toString("hex");
-  const slug = uniqueSlug("local_jobs", `${parsed.job.title}-${parsed.job.city}-${parsed.job.state}`);
-  transactionFile(dbPath, () => {
-    runSql(`
-      INSERT INTO local_jobs (
-      id, company_id, slug, title, category, facility_type, job_type, shifts_json, city, state, zip,
-      description, requirements, benefits, salary_min_cents, salary_max_cents, pay_type,
-      show_salary, eeo_statement, status, published_at, expires_at, created_at, updated_at
-      ) VALUES (${[
-      sqlString(jobId),
-      sqlString(companyId),
-      sqlString(slug),
-      sqlString(parsed.job.title),
-      sqlString(parsed.job.category),
-      sqlString(parsed.job.facilityType),
-      sqlString(parsed.job.jobType),
-      sqlString(JSON.stringify(parsed.job.shifts)),
-      sqlString(parsed.job.city),
-      sqlString(parsed.job.state),
-      sqlString(parsed.job.zip),
-      sqlString(parsed.job.description),
-      sqlString(parsed.job.requirements),
-      sqlString(parsed.job.benefits),
-      sqlNumber(parsed.job.salaryMinCents),
-      sqlNumber(parsed.job.salaryMaxCents),
-      sqlString(parsed.job.payType),
-      parsed.job.showSalary ? "1" : "0",
-      sqlString(parsed.job.eeoStatement),
-      sqlString("DRAFT"),
-      "NULL",
-      "NULL",
-      sqlString(timestamp),
-      sqlString(timestamp),
-      ].join(", ")})
-    `);
-    runSql(`
-      INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at)
-      VALUES (${[
-        sqlString(randomBytes(16).toString("hex")),
-        sqlString(jobId),
-        "1",
-        sqlString("DRAFT"),
-        sqlString("UNSTRUCTURED"),
-        sqlString(timestamp),
-      ].join(", ")})
-    `);
+  const slug = await uniqueSlug("jobs", `${parsed.job.title}-${parsed.job.city}-${parsed.job.state}`);
+  await tx(async () => {
+    await run(
+      `INSERT INTO jobs (
+        id, company_id, slug, title, category, facility_type, job_type, shifts_json, city, state, zip,
+        description, requirements, benefits, salary_min_cents, salary_max_cents, pay_type,
+        show_salary, eeo_statement, status, published_at, expires_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', NULL, NULL, ?, ?)`,
+      [
+        jobId,
+        companyId,
+        slug,
+        parsed.job.title,
+        parsed.job.category,
+        parsed.job.facilityType,
+        parsed.job.jobType,
+        JSON.stringify(parsed.job.shifts),
+        parsed.job.city,
+        parsed.job.state,
+        parsed.job.zip,
+        parsed.job.description,
+        parsed.job.requirements,
+        parsed.job.benefits,
+        parsed.job.salaryMinCents,
+        parsed.job.salaryMaxCents,
+        parsed.job.payType,
+        parsed.job.showSalary,
+        parsed.job.eeoStatement,
+        timestamp,
+        timestamp,
+      ],
+    );
+    await run(
+      "INSERT INTO job_criteria_sets (id, job_id, version, status, authoring_state, created_at) VALUES (?, ?, 1, 'DRAFT', 'UNSTRUCTURED', ?)",
+      [randomBytes(16).toString("hex"), jobId, timestamp],
+    );
   });
-  return { ok: true as const, job: getJobForCompany(jobId, companyId)! };
+  return { ok: true as const, job: (await getJobForCompany(jobId, companyId))! };
 }
 
-export function updateJobForCompany(jobId: string, companyId: string, input: LocalJobInput) {
-  const existing = getJobForCompany(jobId, companyId);
+export async function updateJobForCompany(jobId: string, companyId: string, input: LocalJobInput) {
+  const existing = await getJobForCompany(jobId, companyId);
   if (!existing) return { ok: false as const, error: "Job not found" };
   const merged = { ...existing, ...input };
   const parsed = normalizeJobInput(merged);
   if (!parsed.ok) return parsed;
-  const timestamp = now();
-  runSql(`
-    UPDATE local_jobs
-    SET
-      title = ${sqlString(parsed.job.title)},
-      category = ${sqlString(parsed.job.category)},
-      facility_type = ${sqlString(parsed.job.facilityType)},
-      job_type = ${sqlString(parsed.job.jobType)},
-      shifts_json = ${sqlString(JSON.stringify(parsed.job.shifts))},
-      city = ${sqlString(parsed.job.city)},
-      state = ${sqlString(parsed.job.state)},
-      zip = ${sqlString(parsed.job.zip)},
-      description = ${sqlString(parsed.job.description)},
-      requirements = ${sqlString(parsed.job.requirements)},
-      benefits = ${sqlString(parsed.job.benefits)},
-      salary_min_cents = ${sqlNumber(parsed.job.salaryMinCents)},
-      salary_max_cents = ${sqlNumber(parsed.job.salaryMaxCents)},
-      pay_type = ${sqlString(parsed.job.payType)},
-      show_salary = ${parsed.job.showSalary ? "1" : "0"},
-      eeo_statement = ${sqlString(parsed.job.eeoStatement)},
-      updated_at = ${sqlString(timestamp)}
-    WHERE id = ${sqlString(jobId)} AND company_id = ${sqlString(companyId)}
-  `);
-  return { ok: true as const, job: getJobForCompany(jobId, companyId)! };
+  await run(
+    `UPDATE jobs
+    SET title = ?, category = ?, facility_type = ?, job_type = ?, shifts_json = ?, city = ?, state = ?, zip = ?,
+        description = ?, requirements = ?, benefits = ?, salary_min_cents = ?, salary_max_cents = ?, pay_type = ?,
+        show_salary = ?, eeo_statement = ?, updated_at = ?
+    WHERE id = ? AND company_id = ?`,
+    [
+      parsed.job.title,
+      parsed.job.category,
+      parsed.job.facilityType,
+      parsed.job.jobType,
+      JSON.stringify(parsed.job.shifts),
+      parsed.job.city,
+      parsed.job.state,
+      parsed.job.zip,
+      parsed.job.description,
+      parsed.job.requirements,
+      parsed.job.benefits,
+      parsed.job.salaryMinCents,
+      parsed.job.salaryMaxCents,
+      parsed.job.payType,
+      parsed.job.showSalary,
+      parsed.job.eeoStatement,
+      now(),
+      jobId,
+      companyId,
+    ],
+  );
+  return { ok: true as const, job: (await getJobForCompany(jobId, companyId))! };
 }
 
-export function setJobStatusForCompany(jobId: string, companyId: string, status: LocalJobStatus) {
-  const job = getJobForCompany(jobId, companyId);
+export async function setJobStatusForCompany(jobId: string, companyId: string, status: LocalJobStatus) {
+  const job = await getJobForCompany(jobId, companyId);
   if (!job) return null;
   const timestamp = now();
-  const publishedAt = status === "ACTIVE" ? job.publishedAt?.toISOString() ?? timestamp : job.publishedAt?.toISOString() ?? null;
-  transactionFile(dbPath, () => {
+  const publishedAt =
+    status === "ACTIVE" ? job.publishedAt?.toISOString() ?? timestamp : job.publishedAt?.toISOString() ?? null;
+  await tx(async () => {
     if (status === "ACTIVE") {
-      const [draft] = querySql<Row>(
-        `SELECT id FROM job_criteria_sets WHERE job_id = ${sqlString(jobId)} AND status = 'DRAFT' LIMIT 1`,
+      const draft = await queryOne<Row>(
+        "SELECT id FROM job_criteria_sets WHERE job_id = ? AND status = 'DRAFT' LIMIT 1",
+        [jobId],
       );
       if (draft?.id) {
-        runSql(`
-          UPDATE job_criteria_sets
-          SET status = 'PUBLISHED', published_at = ${sqlString(timestamp)}
-          WHERE id = ${sqlString(String(draft.id))}
-        `);
+        await run("UPDATE job_criteria_sets SET status = 'PUBLISHED', published_at = ? WHERE id = ?", [
+          timestamp,
+          String(draft.id),
+        ]);
       }
     }
-    runSql(`
-      UPDATE local_jobs
-      SET status = ${sqlString(status)}, published_at = ${sqlString(publishedAt)}, updated_at = ${sqlString(timestamp)}
-      WHERE id = ${sqlString(jobId)} AND company_id = ${sqlString(companyId)}
-    `);
+    await run("UPDATE jobs SET status = ?, published_at = ?, updated_at = ? WHERE id = ? AND company_id = ?", [
+      status,
+      publishedAt,
+      timestamp,
+      jobId,
+      companyId,
+    ]);
   });
   return getJobForCompany(jobId, companyId);
 }
 
-export function listPublicJobs(filters: {
+export async function listPublicJobs(filters: {
   q?: string;
   category?: string;
   state?: string;
@@ -593,69 +471,76 @@ export function listPublicJobs(filters: {
   page?: number;
   pageSize?: number;
 }) {
-  initializeLocalPlatform();
-  const clauses = [`j.status = ${sqlString("ACTIVE")}`];
-  if (filters.state) clauses.push(`j.state = ${sqlString(filters.state)}`);
-  if (filters.category) clauses.push(`j.category = ${sqlString(filters.category)}`);
-  if (filters.jobType) clauses.push(`j.job_type = ${sqlString(filters.jobType)}`);
+  const clauses = ["j.status = 'ACTIVE'"];
+  const parameters: (string | number)[] = [];
+  if (filters.state) {
+    clauses.push("j.state = ?");
+    parameters.push(filters.state);
+  }
+  if (filters.category) {
+    clauses.push("j.category = ?");
+    parameters.push(filters.category);
+  }
+  if (filters.jobType) {
+    clauses.push("j.job_type = ?");
+    parameters.push(filters.jobType);
+  }
   if (filters.q) {
     const q = `%${filters.q.replaceAll("%", "").replaceAll("_", "")}%`;
-    clauses.push(`(j.title LIKE ${sqlString(q)} OR j.description LIKE ${sqlString(q)} OR j.city LIKE ${sqlString(q)} OR c.name LIKE ${sqlString(q)})`);
+    // SQLite LIKE was case-insensitive; ILIKE preserves that behavior on Postgres.
+    clauses.push("(j.title ILIKE ? OR j.description ILIKE ? OR j.city ILIKE ? OR c.name ILIKE ?)");
+    parameters.push(q, q, q, q);
   }
   const where = clauses.join(" AND ");
   const page = Math.max(1, filters.page ?? 1);
   const pageSize = filters.pageSize ?? 12;
-  const [countRow] = querySql<{ count: number }>(`
-    SELECT COUNT(*) AS count
-    FROM local_jobs j
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE ${where}
-  `);
-  const jobs = querySql<Row>(`
-    SELECT j.*, c.name AS company_name, c.slug AS company_slug, c.website AS company_website
-    FROM local_jobs j
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE ${where}
-    ORDER BY j.published_at DESC, j.created_at DESC
-    LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
-  `).map(mapJob);
+  const countRow = await queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count FROM jobs j JOIN companies c ON c.id = j.company_id WHERE ${where}`,
+    parameters,
+  );
+  const jobs = (
+    await query<Row>(
+      `SELECT j.*, c.name AS company_name, c.slug AS company_slug, c.website AS company_website
+      FROM jobs j
+      JOIN companies c ON c.id = j.company_id
+      WHERE ${where}
+      ORDER BY j.published_at DESC NULLS LAST, j.created_at DESC
+      LIMIT ? OFFSET ?`,
+      [...parameters, pageSize, (page - 1) * pageSize],
+    )
+  ).map(mapJob);
   return { jobs, total: Number(countRow?.count ?? 0) };
 }
 
-export function getPublicJobStats() {
-  initializeLocalPlatform();
-  const [jobRow] = querySql<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM local_jobs WHERE status = ${sqlString("ACTIVE")}`,
+export async function getPublicJobStats() {
+  const jobRow = await queryOne<{ count: number }>("SELECT COUNT(*) AS count FROM jobs WHERE status = 'ACTIVE'");
+  const companyRow = await queryOne<{ count: number }>(
+    "SELECT COUNT(DISTINCT company_id) AS count FROM jobs WHERE status = 'ACTIVE'",
   );
-  const [companyRow] = querySql<{ count: number }>(`
-    SELECT COUNT(DISTINCT company_id) AS count
-    FROM local_jobs
-    WHERE status = ${sqlString("ACTIVE")}
-  `);
   return {
     jobCount: Number(jobRow?.count ?? 0),
     companyCount: Number(companyRow?.count ?? 0),
   };
 }
 
-export function getPublicJobBySlug(slug: string) {
-  initializeLocalPlatform();
-  return jobSelect(`j.slug = ${sqlString(slug)} AND j.status = ${sqlString("ACTIVE")}`, "j.created_at DESC")[0] ?? null;
+export async function getPublicJobBySlug(slug: string) {
+  return (await jobSelect("j.slug = ? AND j.status = 'ACTIVE'", [slug]))[0] ?? null;
 }
 
-export function listRelatedPublicJobs(job: LocalJob, take = 3) {
-  initializeLocalPlatform();
-  return querySql<Row>(`
-    SELECT j.*, c.name AS company_name, c.slug AS company_slug, c.website AS company_website
-    FROM local_jobs j
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE j.status = ${sqlString("ACTIVE")} AND j.category = ${sqlString(job.category)} AND j.id != ${sqlString(job.id)}
-    ORDER BY j.published_at DESC, j.created_at DESC
-    LIMIT ${take}
-  `).map(mapJob);
+export async function listRelatedPublicJobs(job: LocalJob, take = 3) {
+  const rows = await query<Row>(
+    `SELECT j.*, c.name AS company_name, c.slug AS company_slug, c.website AS company_website
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    WHERE j.status = 'ACTIVE' AND j.category = ? AND j.id != ?
+    ORDER BY j.published_at DESC NULLS LAST, j.created_at DESC
+    LIMIT ?`,
+    [job.category, job.id, take],
+  );
+  return rows.map(mapJob);
 }
 
-export function createApplication(input: {
+export async function createApplication(input: {
   jobId: string;
   seekerUserId: string;
   seekerEmail: string;
@@ -664,201 +549,154 @@ export function createApplication(input: {
   licenseConfirmed: boolean;
   accommodationNoticeShown?: boolean;
 }) {
-  initializeLocalPlatform();
-  const snapshot = getSandboxSnapshot(input.sandboxId);
+  const snapshot = await getSandboxSnapshot(input.sandboxId);
   const timestamp = now();
   const id = randomBytes(16).toString("hex");
   const profileJson = JSON.stringify(snapshot.profile);
   const resumeJson = JSON.stringify(snapshot.resume);
   let failure: string | null = null;
 
-  transactionFile(dbPath, () => {
-    const job = jobSelect(`j.id = ${sqlString(input.jobId)} AND j.status = ${sqlString("ACTIVE")}`, "j.created_at DESC")[0];
+  await tx(async () => {
+    const job = (await jobSelect("j.id = ? AND j.status = 'ACTIVE'", [input.jobId]))[0];
     if (!job) {
       failure = "This job is not accepting applications";
       return;
     }
-    const existing = querySql<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM local_applications WHERE job_id = ${sqlString(job.id)} AND seeker_user_id = ${sqlString(input.seekerUserId)}`,
-    )[0];
-    if (existing?.count) {
+    const existing = await queryOne<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM applications WHERE job_id = ? AND seeker_user_id = ?",
+      [job.id, input.seekerUserId],
+    );
+    if (Number(existing?.count ?? 0)) {
       failure = "You already applied to this job";
       return;
     }
-    const [criteriaSet] = querySql<Row>(`
-      SELECT id, authoring_state FROM job_criteria_sets
-      WHERE job_id = ${sqlString(job.id)} AND status = 'PUBLISHED'
-      LIMIT 1
-    `);
+    const criteriaSet = await queryOne<Row>(
+      "SELECT id, authoring_state FROM job_criteria_sets WHERE job_id = ? AND status = 'PUBLISHED' LIMIT 1",
+      [job.id],
+    );
     if (!criteriaSet?.id) {
       failure = "This job is not ready to accept applications";
       return;
     }
 
     const evaluationState = criteriaSet.authoring_state === "UNSTRUCTURED" ? "NOT_APPLICABLE" : "NOT_STARTED";
-    runSql(`
-      INSERT INTO local_applications (
-      id, job_id, seeker_user_id, seeker_name, seeker_email, seeker_headline, seeker_location,
-      cover_letter, license_confirmed, profile_snapshot_json, resume_snapshot_json, criteria_set_id,
-      resume_revision_id, snapshot_hash, submitted_at, evaluation_state, disposition_state,
-      accommodation_state, accommodation_notice_shown_at, status, created_at, updated_at
-    ) VALUES (${[
-      sqlString(id),
-      sqlString(job.id),
-      sqlString(input.seekerUserId),
-      sqlString(snapshot.profile.fullName || input.seekerEmail),
-      sqlString(snapshot.profile.email || input.seekerEmail),
-      sqlString(snapshot.profile.headline),
-      sqlString(snapshot.profile.location),
-      sqlString(optionalText(input.coverLetter)),
-      input.licenseConfirmed ? "1" : "0",
-      sqlString(profileJson),
-      sqlString(resumeJson),
-      sqlString(String(criteriaSet.id)),
-      input.accommodationNoticeShown ? sqlString(timestamp) : "NULL",
-      sqlString(applicationSnapshotHash(snapshot.profile, snapshot.resume)),
-      sqlString(timestamp),
-      sqlString(evaluationState),
-      sqlString("SUBMITTED"),
-      sqlString("NONE"),
-      "NULL",
-      sqlString("PENDING"),
-      sqlString(timestamp),
-      sqlString(timestamp),
-    ].join(", ")})
-    `);
-    runSql(`
-      INSERT INTO application_transitions (id, application_id, from_state, to_state, actor_kind, actor_user_id, rule_criterion_id, rationale, created_at)
-      VALUES (${[
-        sqlString(randomBytes(16).toString("hex")),
-        sqlString(id),
-        "NULL",
-        sqlString("SUBMITTED"),
-        sqlString("SYSTEM"),
-        "NULL",
-        "NULL",
-        sqlString("Application submitted"),
-        sqlString(timestamp),
-      ].join(", ")})
-    `);
-    runSql(`
-      INSERT INTO audit_events (id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at)
-      VALUES (${[
-        sqlString(randomBytes(16).toString("hex")),
-        sqlString("APPLICATION_SUBMITTED"),
-        sqlString("SYSTEM"),
-        "NULL",
-        sqlString("APPLICATION"),
-        sqlString(id),
-        sqlString(job.companyId),
-        sqlString(JSON.stringify({ criteriaSetId: String(criteriaSet.id), snapshotHash: applicationSnapshotHash(snapshot.profile, snapshot.resume) })),
-        sqlString(timestamp),
-      ].join(", ")})
-    `);
-    if (evaluationState === "NOT_STARTED") runDeterministicEvaluationInTransaction(dbPath, id);
+    await run(
+      `INSERT INTO applications (
+        id, job_id, seeker_user_id, seeker_name, seeker_email, seeker_headline, seeker_location,
+        cover_letter, license_confirmed, profile_snapshot_json, resume_snapshot_json, criteria_set_id,
+        resume_revision_id, snapshot_hash, submitted_at, evaluation_state, disposition_state,
+        accommodation_state, accommodation_notice_shown_at, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'SUBMITTED', 'NONE', ?, 'PENDING', ?, ?)`,
+      [
+        id,
+        job.id,
+        input.seekerUserId,
+        snapshot.profile.fullName || input.seekerEmail,
+        snapshot.profile.email || input.seekerEmail,
+        snapshot.profile.headline,
+        snapshot.profile.location,
+        optionalText(input.coverLetter),
+        input.licenseConfirmed,
+        profileJson,
+        resumeJson,
+        String(criteriaSet.id),
+        applicationSnapshotHash(snapshot.profile, snapshot.resume),
+        timestamp,
+        evaluationState,
+        input.accommodationNoticeShown ? timestamp : null,
+        timestamp,
+        timestamp,
+      ],
+    );
+    await run(
+      `INSERT INTO application_transitions (id, application_id, from_state, to_state, actor_kind, actor_user_id, rule_criterion_id, rationale, created_at)
+       VALUES (?, ?, NULL, 'SUBMITTED', 'SYSTEM', NULL, NULL, 'Application submitted', ?)`,
+      [randomBytes(16).toString("hex"), id, timestamp],
+    );
+    await run(
+      `INSERT INTO audit_events (id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at)
+       VALUES (?, 'APPLICATION_SUBMITTED', 'SYSTEM', NULL, 'APPLICATION', ?, ?, ?, ?)`,
+      [
+        randomBytes(16).toString("hex"),
+        id,
+        job.companyId,
+        JSON.stringify({
+          criteriaSetId: String(criteriaSet.id),
+          snapshotHash: applicationSnapshotHash(snapshot.profile, snapshot.resume),
+        }),
+        timestamp,
+      ],
+    );
+    if (evaluationState === "NOT_STARTED") await runDeterministicEvaluationInTransaction(id);
   });
   if (failure) return { ok: false as const, error: failure };
-  return { ok: true as const, application: getApplication(id)! };
+  return { ok: true as const, application: (await getApplication(id))! };
 }
 
-export function getApplication(id: string) {
-  initializeLocalPlatform();
-  const [row] = querySql<Row>(`
-    SELECT
-      a.id AS application_id,
-      a.status AS application_status,
-      a.created_at AS application_created_at,
-      a.*,
-      j.*,
-      c.name AS company_name,
-      c.slug AS company_slug,
-      c.website AS company_website
-    FROM local_applications a
-    JOIN local_jobs j ON j.id = a.job_id
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE a.id = ${sqlString(id)}
-    LIMIT 1
-  `);
+// Column order matters: j.* intentionally shadows a.'s id/status/created_at (mapJob reads them),
+// while the application's own values survive through the leading aliases — same as the SQLite
+// original, and node-pg resolves duplicate field names the same way (last one wins).
+const APPLICATION_SELECT = `
+  SELECT
+    a.id AS application_id,
+    a.status AS application_status,
+    a.created_at AS application_created_at,
+    a.*,
+    j.*,
+    c.name AS company_name,
+    c.slug AS company_slug,
+    c.website AS company_website
+  FROM applications a
+  JOIN jobs j ON j.id = a.job_id
+  JOIN companies c ON c.id = j.company_id`;
+
+export async function getApplication(id: string) {
+  const row = await queryOne<Row>(`${APPLICATION_SELECT} WHERE a.id = ? LIMIT 1`, [id]);
   return row ? mapApplication(row) : null;
 }
 
-export function listApplicationsForSeeker(userId: string) {
-  initializeLocalPlatform();
-  return querySql<Row>(`
-    SELECT
-      a.id AS application_id,
-      a.status AS application_status,
-      a.created_at AS application_created_at,
-      a.*,
-      j.*,
-      c.name AS company_name,
-      c.slug AS company_slug,
-      c.website AS company_website
-    FROM local_applications a
-    JOIN local_jobs j ON j.id = a.job_id
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE a.seeker_user_id = ${sqlString(userId)}
-    ORDER BY a.created_at DESC
-  `).map(mapApplication);
+export async function listApplicationsForSeeker(userId: string) {
+  const rows = await query<Row>(`${APPLICATION_SELECT} WHERE a.seeker_user_id = ? ORDER BY a.created_at DESC`, [userId]);
+  return rows.map(mapApplication);
 }
 
-export function listApplicationsForCompany(companyId: string, jobId?: string) {
-  initializeLocalPlatform();
-  return querySql<Row>(`
-    SELECT
-      a.id AS application_id,
-      a.status AS application_status,
-      a.created_at AS application_created_at,
-      a.*,
-      j.*,
-      c.name AS company_name,
-      c.slug AS company_slug,
-      c.website AS company_website
-    FROM local_applications a
-    JOIN local_jobs j ON j.id = a.job_id
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE j.company_id = ${sqlString(companyId)}${jobId ? ` AND j.id = ${sqlString(jobId)}` : ""}
-    ORDER BY a.created_at DESC
-  `).map(mapApplication);
+export async function listApplicationsForCompany(companyId: string, jobId?: string) {
+  const rows = jobId
+    ? await query<Row>(`${APPLICATION_SELECT} WHERE j.company_id = ? AND j.id = ? ORDER BY a.created_at DESC`, [companyId, jobId])
+    : await query<Row>(`${APPLICATION_SELECT} WHERE j.company_id = ? ORDER BY a.created_at DESC`, [companyId]);
+  return rows.map(mapApplication);
 }
 
-export function listSavedJobsForSeeker(userId: string) {
-  initializeLocalPlatform();
-  return querySql<Row>(`
-    SELECT j.*, c.name AS company_name, c.slug AS company_slug, c.website AS company_website
-    FROM local_saved_jobs s
-    JOIN local_jobs j ON j.id = s.job_id
-    JOIN local_companies c ON c.id = j.company_id
-    WHERE s.seeker_user_id = ${sqlString(userId)} AND j.status = ${sqlString("ACTIVE")}
-    ORDER BY s.created_at DESC
-  `).map(mapJob);
+export async function listSavedJobsForSeeker(userId: string) {
+  const rows = await query<Row>(
+    `SELECT j.*, c.name AS company_name, c.slug AS company_slug, c.website AS company_website
+    FROM saved_jobs s
+    JOIN jobs j ON j.id = s.job_id
+    JOIN companies c ON c.id = j.company_id
+    WHERE s.seeker_user_id = ? AND j.status = 'ACTIVE'
+    ORDER BY s.created_at DESC`,
+    [userId],
+  );
+  return rows.map(mapJob);
 }
 
-export function isJobSaved(userId: string, jobId: string) {
-  initializeLocalPlatform();
-  const [row] = querySql<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM local_saved_jobs WHERE seeker_user_id = ${sqlString(userId)} AND job_id = ${sqlString(jobId)}`,
+export async function isJobSaved(userId: string, jobId: string) {
+  const row = await queryOne<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM saved_jobs WHERE seeker_user_id = ? AND job_id = ?",
+    [userId, jobId],
   );
   return Number(row?.count ?? 0) > 0;
 }
 
-export function saveJobForSeeker(userId: string, jobId: string) {
-  initializeLocalPlatform();
-  const timestamp = now();
-  runSql(`
-    INSERT OR IGNORE INTO local_saved_jobs (id, job_id, seeker_user_id, created_at)
-    VALUES (${[
-      sqlString(randomBytes(16).toString("hex")),
-      sqlString(jobId),
-      sqlString(userId),
-      sqlString(timestamp),
-    ].join(", ")})
-  `);
+export async function saveJobForSeeker(userId: string, jobId: string) {
+  await run(
+    "INSERT INTO saved_jobs (id, job_id, seeker_user_id, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (job_id, seeker_user_id) DO NOTHING",
+    [randomBytes(16).toString("hex"), jobId, userId, now()],
+  );
   return { saved: true };
 }
 
-export function removeSavedJobForSeeker(userId: string, jobId: string) {
-  initializeLocalPlatform();
-  runSql(`DELETE FROM local_saved_jobs WHERE seeker_user_id = ${sqlString(userId)} AND job_id = ${sqlString(jobId)}`);
+export async function removeSavedJobForSeeker(userId: string, jobId: string) {
+  await run("DELETE FROM saved_jobs WHERE seeker_user_id = ? AND job_id = ?", [userId, jobId]);
   return { saved: false };
 }

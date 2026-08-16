@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createCriterion, type CriterionAuthoringInput } from "@/lib/criteria/authoring";
 import { withApiHandler } from "@/lib/evaluation/http";
-import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +14,7 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Criterion input must be a JSON object", code: "INVALID_INPUT" }, { status: 422 });
     }
     const { id } = await routeContext.params;
-    const criterion = createCriterion(evaluationDbPath(), actor, id, body as CriterionAuthoringInput);
+    const criterion = await createCriterion(actor, id, body as CriterionAuthoringInput);
     return NextResponse.json({ criterion }, { status: 201 });
   });
 }

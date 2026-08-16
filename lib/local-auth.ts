@@ -1,19 +1,15 @@
 import "server-only";
 
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
-import path from "node:path";
 import { cookies } from "next/headers";
 import { createLocalCompanyForOwner } from "@/lib/local-platform";
-import { queryOneFile, runFile, transactionFile } from "@/lib/db/sql";
-import { createSandboxProfile } from "@/lib/sqlite-sandbox";
-import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
+import { query, queryOne, run, tx } from "@/lib/db/sql";
+import { createResumeWorkspace } from "@/lib/resume/store";
 import type { SandboxSignupInput } from "@/lib/sandbox-types";
 
 export const LOCAL_SESSION_COOKIE = "careeros_local_session";
 export type LocalUserRole = "SEEKER" | "EMPLOYER";
 
-const dbDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dbDir, "careersrx-live-resume-sandbox.sqlite");
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 30;
 
 export type LocalUser = {
@@ -24,6 +20,7 @@ export type LocalUser = {
   fullName: string;
   role: LocalUserRole;
   isAdmin: boolean;
+  emailVerifiedAt: string | null;
   createdAt: string;
 };
 
@@ -39,68 +36,6 @@ export type LocalEmployerSignupInput = {
   email: string;
   password: string;
 };
-
-function sqlString(value: string | null) {
-  if (value === null) return "NULL";
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function runSql(sql: string) {
-  runSqlFile(dbPath, sql);
-}
-
-function querySql<T>(sql: string): T[] {
-  return querySqlFile<T>(dbPath, sql);
-}
-
-function initializeLocalAuth() {
-  runSql(`
-    PRAGMA journal_mode = WAL;
-
-    CREATE TABLE IF NOT EXISTS local_users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL,
-      full_name TEXT NOT NULL,
-      role TEXT NOT NULL,
-      is_admin INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS local_sessions (
-      id TEXT PRIMARY KEY,
-      token_hash TEXT NOT NULL UNIQUE,
-      user_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
-    );
-  `);
-
-  const hasAdminColumn = querySql<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM pragma_table_info('local_users') WHERE name = 'is_admin'",
-  )[0]?.count;
-  if (!hasAdminColumn) {
-    runSql("ALTER TABLE local_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
-  }
-
-  runSql(`
-    CREATE TABLE IF NOT EXISTS audit_events (
-      id TEXT PRIMARY KEY,
-      event_type TEXT NOT NULL,
-      actor_kind TEXT NOT NULL,
-      actor_user_id TEXT,
-      entity_type TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      company_id TEXT,
-      metadata_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-  `);
-}
 
 function now() {
   return new Date().toISOString();
@@ -137,61 +72,50 @@ function mapUser(row: Record<string, unknown>): LocalUser {
     lastName: String(row.last_name ?? ""),
     fullName: String(row.full_name ?? ""),
     role,
-    isAdmin: Number(row.is_admin ?? 0) === 1,
+    isAdmin: row.is_admin === true,
+    emailVerifiedAt: row.email_verified_at ? String(row.email_verified_at) : null,
     createdAt: String(row.created_at ?? ""),
   };
 }
 
-function getUserByEmail(email: string) {
-  initializeLocalAuth();
-  const [row] = querySql<Record<string, unknown>>(
-    `SELECT * FROM local_users WHERE email = ${sqlString(normalizeEmail(email))}`,
-  );
-  return row ?? null;
+async function getUserRowByEmail(email: string) {
+  return queryOne<Record<string, unknown>>("SELECT * FROM users WHERE email = ?", [normalizeEmail(email)]);
 }
 
-function getUserById(userId: string) {
-  initializeLocalAuth();
-  const [row] = querySql<Record<string, unknown>>(
-    `SELECT * FROM local_users WHERE id = ${sqlString(userId)}`,
-  );
+async function getUserById(userId: string) {
+  const row = await queryOne<Record<string, unknown>>("SELECT * FROM users WHERE id = ?", [userId]);
   return row ? mapUser(row) : null;
 }
 
+/** Résumé workspaces are keyed directly by user id on Postgres. Kept for call-site stability. */
 export function sandboxIdForUser(userId: string) {
-  return `user:${userId}`;
+  return userId;
 }
 
 export function dashboardPathForUser(user: LocalUser) {
   return user.role === "EMPLOYER" ? "/dashboard/employer" : "/dashboard/seeker/profile";
 }
 
-export function createLocalSession(userId: string) {
-  initializeLocalAuth();
+export async function createLocalSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + sessionTtlMs).toISOString();
   const timestamp = now();
-  runSql(
-    `INSERT INTO local_sessions (id, token_hash, user_id, expires_at, created_at, last_seen_at) VALUES (${[
-      sqlString(randomBytes(16).toString("hex")),
-      sqlString(hashToken(token)),
-      sqlString(userId),
-      sqlString(expiresAt),
-      sqlString(timestamp),
-      sqlString(timestamp),
-    ].join(", ")})`,
+  await run(
+    "INSERT INTO sessions (id, token_hash, user_id, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
+    [randomBytes(16).toString("hex"), hashToken(token), userId, expiresAt, timestamp, timestamp],
   );
   return { token, expiresAt };
 }
 
-export function createLocalSeekerAccount(input: LocalSignupInput) {
-  initializeLocalAuth();
+export async function createLocalSeekerAccount(input: LocalSignupInput) {
   const email = normalizeEmail(input.email);
   if (!email) return { ok: false as const, error: "Email is required" };
   if (input.password.trim().length < 8) {
     return { ok: false as const, error: "Password must be at least 8 characters" };
   }
-  if (getUserByEmail(email)) return { ok: false as const, error: "An account already exists for that email" };
+  if (await getUserRowByEmail(email)) {
+    return { ok: false as const, error: "An account already exists for that email" };
+  }
 
   const fullName = input.fullName.trim();
   const [firstFallback = "", ...lastParts] = fullName.split(" ").filter(Boolean);
@@ -205,44 +129,37 @@ export function createLocalSeekerAccount(input: LocalSignupInput) {
     fullName,
     role: "SEEKER",
     isAdmin: false,
+    emailVerifiedAt: null,
     createdAt: now(),
   };
-  const timestamp = now();
-  runSql(
-    `INSERT INTO local_users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at) VALUES (${[
-      sqlString(user.id),
-      sqlString(user.email),
-      sqlString(hashPassword(input.password)),
-      sqlString(user.firstName),
-      sqlString(user.lastName),
-      sqlString(user.fullName),
-      sqlString(user.role),
-      sqlString(timestamp),
-      sqlString(timestamp),
-    ].join(", ")})`,
-  );
 
-  createSandboxProfile(
-    {
-      email,
-      fullName,
-      headline: input.headline,
-      location: input.location,
-      summary: input.summary,
-      experience: input.experience,
-      skills: input.skills,
-      credentials: input.credentials,
-      preferredRoles: input.preferredRoles,
-      preferredLocations: input.preferredLocations,
-    },
-    sandboxIdForUser(user.id),
-  );
+  await tx(async () => {
+    const timestamp = now();
+    await run(
+      "INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [user.id, user.email, hashPassword(input.password), user.firstName, user.lastName, user.fullName, user.role, timestamp, timestamp],
+    );
+    await createResumeWorkspace(
+      {
+        email,
+        fullName,
+        headline: input.headline,
+        location: input.location,
+        summary: input.summary,
+        experience: input.experience,
+        skills: input.skills,
+        credentials: input.credentials,
+        preferredRoles: input.preferredRoles,
+        preferredLocations: input.preferredLocations,
+      },
+      user.id,
+    );
+  });
 
   return { ok: true as const, user };
 }
 
-export function createLocalEmployerAccount(input: LocalEmployerSignupInput) {
-  initializeLocalAuth();
+export async function createLocalEmployerAccount(input: LocalEmployerSignupInput) {
   const email = normalizeEmail(input.email);
   const companyName = input.companyName.trim();
   const contactName = input.contactName.trim();
@@ -252,7 +169,9 @@ export function createLocalEmployerAccount(input: LocalEmployerSignupInput) {
   if (input.password.trim().length < 8) {
     return { ok: false as const, error: "Password must be at least 8 characters" };
   }
-  if (getUserByEmail(email)) return { ok: false as const, error: "An account already exists for that email" };
+  if (await getUserRowByEmail(email)) {
+    return { ok: false as const, error: "An account already exists for that email" };
+  }
 
   const [firstFallback = contactName, ...lastParts] = contactName.split(" ").filter(Boolean);
   const user: LocalUser = {
@@ -263,35 +182,29 @@ export function createLocalEmployerAccount(input: LocalEmployerSignupInput) {
     fullName: contactName,
     role: "EMPLOYER",
     isAdmin: false,
+    emailVerifiedAt: null,
     createdAt: now(),
   };
-  const timestamp = now();
-  runSql(
-    `INSERT INTO local_users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at) VALUES (${[
-      sqlString(user.id),
-      sqlString(user.email),
-      sqlString(hashPassword(input.password)),
-      sqlString(user.firstName),
-      sqlString(user.lastName),
-      sqlString(user.fullName),
-      sqlString(user.role),
-      sqlString(timestamp),
-      sqlString(timestamp),
-    ].join(", ")})`,
-  );
 
-  const company = createLocalCompanyForOwner({
-    ownerUserId: user.id,
-    companyName,
-    contactName,
-    contactEmail: email,
+  const company = await tx(async () => {
+    const timestamp = now();
+    await run(
+      "INSERT INTO users (id, email, password_hash, first_name, last_name, full_name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [user.id, user.email, hashPassword(input.password), user.firstName, user.lastName, user.fullName, user.role, timestamp, timestamp],
+    );
+    return createLocalCompanyForOwner({
+      ownerUserId: user.id,
+      companyName,
+      contactName,
+      contactEmail: email,
+    });
   });
 
   return { ok: true as const, user, company };
 }
 
-export function authenticateLocalUser(email: string, password: string) {
-  const row = getUserByEmail(email);
+export async function authenticateLocalUser(email: string, password: string) {
+  const row = await getUserRowByEmail(email);
   if (!row) return null;
   const passwordHash = String(row.password_hash ?? "");
   if (!verifyPassword(password, passwordHash)) return null;
@@ -299,47 +212,30 @@ export function authenticateLocalUser(email: string, password: string) {
 }
 
 /**
- * Performs the single permitted bootstrap of a local administrator. This intentionally has no HTTP
+ * Performs the single permitted bootstrap of an administrator. This intentionally has no HTTP
  * caller: an operator must first register normally, then run scripts/bootstrap-admin.ts with the
  * registered email in ADMIN_SEED_EMAIL.
  */
-export function bootstrapLocalAdmin(email: string) {
-  initializeLocalAuth();
-  const existingAdmin = queryOneFile<{ count: number }>(
-    dbPath,
-    "SELECT COUNT(*) AS count FROM local_users WHERE is_admin = 1",
+export async function bootstrapLocalAdmin(email: string) {
+  const existingAdmin = await queryOne<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM users WHERE is_admin = TRUE",
   );
   if (Number(existingAdmin?.count ?? 0) > 0) {
     return { ok: false as const, error: "An administrator already exists" };
   }
 
-  const user = queryOneFile<Record<string, unknown>>(
-    dbPath,
-    "SELECT * FROM local_users WHERE email = ?",
-    [normalizeEmail(email)],
-  );
+  const user = await getUserRowByEmail(email);
   if (!user) return { ok: false as const, error: "Register this user before bootstrapping an administrator" };
 
   const timestamp = now();
   const id = randomBytes(16).toString("hex");
-  transactionFile(dbPath, () => {
-    runFile(dbPath, "UPDATE local_users SET is_admin = 1, updated_at = ? WHERE id = ?", [timestamp, String(user.id)]);
-    runFile(
-      dbPath,
+  await tx(async () => {
+    await run("UPDATE users SET is_admin = TRUE, updated_at = ? WHERE id = ?", [timestamp, String(user.id)]);
+    await run(
       `INSERT INTO audit_events (
         id, event_type, actor_kind, actor_user_id, entity_type, entity_id, company_id, metadata_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        "ADMIN_BOOTSTRAPPED",
-        "SYSTEM",
-        null,
-        "LOCAL_USER",
-        String(user.id),
-        null,
-        JSON.stringify({ email: normalizeEmail(email) }),
-        timestamp,
-      ],
+      [id, "ADMIN_BOOTSTRAPPED", "SYSTEM", null, "USER", String(user.id), null, JSON.stringify({ email: normalizeEmail(email) }), timestamp],
     );
   });
 
@@ -351,25 +247,24 @@ export async function getCurrentLocalUser() {
   const token = cookieStore.get(LOCAL_SESSION_COOKIE)?.value;
   if (!token) return null;
 
-  // Read request-bound cookies before opening SQLite so Next marks callers such as the root
-  // navigation as dynamic rather than attempting database access while prerendering a build.
-  initializeLocalAuth();
-
   const tokenHash = hashToken(token);
-  const [session] = querySql<Record<string, unknown>>(
-    `SELECT * FROM local_sessions WHERE token_hash = ${sqlString(tokenHash)}`,
+  const session = await queryOne<Record<string, unknown>>(
+    "SELECT * FROM sessions WHERE token_hash = ?",
+    [tokenHash],
   );
   if (!session) return null;
 
   const expiresAt = new Date(String(session.expires_at ?? ""));
   if (Number.isNaN(expiresAt.valueOf()) || expiresAt.getTime() <= Date.now()) {
-    runSql(`DELETE FROM local_sessions WHERE token_hash = ${sqlString(tokenHash)}`);
+    await run("DELETE FROM sessions WHERE token_hash = ?", [tokenHash]);
     return null;
   }
 
-  runSql(
-    `UPDATE local_sessions SET last_seen_at = ${sqlString(now())} WHERE token_hash = ${sqlString(tokenHash)}`,
-  );
+  // Throttle the last-seen write to once per minute rather than on every authenticated render.
+  const lastSeenAt = new Date(String(session.last_seen_at ?? "")).getTime();
+  if (!Number.isFinite(lastSeenAt) || Date.now() - lastSeenAt > 60_000) {
+    await run("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", [now(), tokenHash]);
+  }
   return getUserById(String(session.user_id ?? ""));
 }
 
@@ -382,8 +277,7 @@ export async function deleteCurrentLocalSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(LOCAL_SESSION_COOKIE)?.value;
   if (!token) return;
-  initializeLocalAuth();
-  runSql(`DELETE FROM local_sessions WHERE token_hash = ${sqlString(hashToken(token))}`);
+  await run("DELETE FROM sessions WHERE token_hash = ?", [hashToken(token)]);
 }
 
 export function sessionCookieOptions(expiresAt: string) {
