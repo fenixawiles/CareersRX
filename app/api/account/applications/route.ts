@@ -20,9 +20,10 @@ export async function POST(request: Request) {
     jobId?: unknown;
     coverLetter?: unknown;
     licenseConfirmed?: unknown;
+    accommodationNoticeShown?: unknown;
   } | null;
-  if (!body || typeof body.jobId !== "string") {
-    return NextResponse.json({ error: "Job is required" }, { status: 400 });
+  if (!body || typeof body.jobId !== "string" || typeof body.licenseConfirmed !== "boolean") {
+    return NextResponse.json({ error: "Job and license confirmation are required" }, { status: 400 });
   }
   const result = createApplication({
     jobId: body.jobId,
@@ -30,7 +31,8 @@ export async function POST(request: Request) {
     seekerEmail: user.email,
     sandboxId: sandboxIdForUser(user.id),
     coverLetter: typeof body.coverLetter === "string" ? body.coverLetter : "",
-    licenseConfirmed: body.licenseConfirmed === true,
+    licenseConfirmed: body.licenseConfirmed,
+    accommodationNoticeShown: body.accommodationNoticeShown === true,
   });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ application: result.application }, { status: 201 });

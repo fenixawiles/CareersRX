@@ -5,6 +5,7 @@ import path from "node:path";
 import slugify from "slugify";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import { transactionFile } from "@/lib/db/sql";
+import { runDeterministicEvaluationInTransaction } from "@/lib/evaluation/run";
 import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
 
 const dbPath = path.join(process.cwd(), "data", "careersrx-live-resume-sandbox.sqlite");
@@ -71,6 +72,7 @@ export type LocalApplication = {
   seekerLocation: string;
   coverLetter: string;
   licenseConfirmed: boolean;
+  accommodationNoticeShown?: boolean;
   status: "PENDING" | "REVIEWED" | "WITHDRAWN";
   createdAt: Date;
   profileSnapshot: Record<string, unknown>;
@@ -659,7 +661,8 @@ export function createApplication(input: {
   seekerEmail: string;
   sandboxId: string;
   coverLetter?: string;
-  licenseConfirmed?: boolean;
+  licenseConfirmed: boolean;
+  accommodationNoticeShown?: boolean;
 }) {
   initializeLocalPlatform();
   const snapshot = getSandboxSnapshot(input.sandboxId);
@@ -712,7 +715,7 @@ export function createApplication(input: {
       sqlString(profileJson),
       sqlString(resumeJson),
       sqlString(String(criteriaSet.id)),
-      "NULL",
+      input.accommodationNoticeShown ? sqlString(timestamp) : "NULL",
       sqlString(applicationSnapshotHash(snapshot.profile, snapshot.resume)),
       sqlString(timestamp),
       sqlString(evaluationState),
@@ -752,6 +755,7 @@ export function createApplication(input: {
         sqlString(timestamp),
       ].join(", ")})
     `);
+    if (evaluationState === "NOT_STARTED") runDeterministicEvaluationInTransaction(dbPath, id);
   });
   if (failure) return { ok: false as const, error: failure };
   return { ok: true as const, application: getApplication(id)! };

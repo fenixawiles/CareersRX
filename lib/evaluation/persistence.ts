@@ -455,7 +455,7 @@ function assertDecisionGrounding(
 }
 
 /** Materializes a fixed, applicant-safe notice from the citations already accepted for this decision. */
-function persistReleasedApplicantExplanation(
+function persistApplicantExplanation(
   dbPath: string,
   input: {
     application: ApplicationRow;
@@ -516,7 +516,7 @@ function persistReleasedApplicantExplanation(
     })),
   });
   const id = randomUUID();
-  const releasedAt = timestamp();
+  const generatedAt = timestamp();
   runFile(
     dbPath,
     `INSERT INTO applicant_explanations (
@@ -533,13 +533,13 @@ function persistReleasedApplicantExplanation(
       input.application.company_id,
       JSON.stringify(explanation),
       renderApplicantExplanation(explanation),
-      releasedAt,
-      releasedAt,
-      input.actor.userId,
+      generatedAt,
+      null,
+      null,
     ],
   );
   audit(dbPath, {
-    eventType: "APPLICANT_EXPLANATION_RELEASED",
+    eventType: "APPLICANT_EXPLANATION_GENERATED",
     entityType: "APPLICANT_EXPLANATION",
     entityId: id,
     companyId: input.actor.companyId,
@@ -646,7 +646,7 @@ export function recordEmployerDecision(
       [id, disposition, createdAt, application.id],
     );
     const explanationId = evaluation
-      ? persistReleasedApplicantExplanation(dbPath, {
+      ? persistApplicantExplanation(dbPath, {
           application,
           evaluation,
           decisionId: id,
@@ -657,12 +657,6 @@ export function recordEmployerDecision(
           actor,
         })
       : null;
-    const { notificationId } = enqueueNotification(dbPath, {
-      recipientUserId: application.seeker_user_id,
-      applicationId: application.id,
-      type: "DECISION_AVAILABLE",
-      payload: { decisionId: id, explanationId, applicationId: application.id },
-    });
     runFile(
       dbPath,
       `INSERT INTO application_transitions (id, application_id, from_state, to_state, actor_kind, actor_user_id, rule_criterion_id, rationale, created_at)
@@ -681,9 +675,48 @@ export function recordEmployerDecision(
         explanationId,
         decision: input.decision,
         reasonCategory: input.reasonCategory ?? null,
-        notificationId,
+        notificationId: null,
       },
     });
     return { id, disposition };
+  });
+}
+
+/** Releases an immutable, already-generated explanation and notifies only the applicant who owns it. */
+export function releaseApplicantExplanation(dbPath: string, actor: EmployerActor, applicationId: string) {
+  return transactionFile(dbPath, () => {
+    const application = applicationForActor(dbPath, actor, applicationId);
+    const explanation = queryOneFile<{ id: string; decision_id: string | null; released_at: string | null }>(
+      dbPath,
+      `SELECT id, decision_id, released_at
+       FROM applicant_explanations
+       WHERE application_id = ? AND company_id = ?
+       ORDER BY generated_at DESC LIMIT 1`,
+      [application.id, application.company_id],
+    );
+    if (!explanation) throw new EvaluationPersistenceError("NOT_FOUND", "No applicant explanation is available to release.");
+    if (explanation.released_at) return { id: explanation.id, releasedAt: explanation.released_at, notificationId: null };
+
+    const releasedAt = timestamp();
+    runFile(
+      dbPath,
+      "UPDATE applicant_explanations SET released_at = ?, released_by_user_id = ? WHERE id = ? AND released_at IS NULL",
+      [releasedAt, actor.userId, explanation.id],
+    );
+    const { notificationId } = enqueueNotification(dbPath, {
+      recipientUserId: application.seeker_user_id,
+      applicationId: application.id,
+      type: "DECISION_AVAILABLE",
+      payload: { decisionId: explanation.decision_id, explanationId: explanation.id, applicationId: application.id },
+    });
+    audit(dbPath, {
+      eventType: "APPLICANT_EXPLANATION_RELEASED",
+      entityType: "APPLICANT_EXPLANATION",
+      entityId: explanation.id,
+      companyId: application.company_id,
+      actorUserId: actor.userId,
+      metadata: { applicationId: application.id, decisionId: explanation.decision_id },
+    });
+    return { id: explanation.id, releasedAt, notificationId };
   });
 }

@@ -6,11 +6,13 @@ import { queryFile, runFile } from "../lib/db/sql";
 import {
   completeEvaluationRun,
   EvaluationPersistenceError,
+  releaseApplicantExplanation,
   recordEmployerDecision,
   recordEvaluationFindings,
   startEvaluationRun,
   type EmployerActor,
 } from "../lib/evaluation/persistence";
+import { getApplicantApplicationDetail, getReleasedApplicantExplanation } from "../lib/evaluation/applicant-read";
 import { pseudonymizeApplication } from "../lib/retention/pseudonymize";
 
 function temporaryDatabasePath() {
@@ -128,10 +130,23 @@ describe("evaluation persistence", () => {
       .toEqual({ locked_by_decision_id: decision.id });
     expect(queryFile<{ current_decision_id: string; disposition_state: string }>(dbPath, "SELECT current_decision_id, disposition_state FROM local_applications WHERE id = ?", ["application"])[0])
       .toEqual({ current_decision_id: decision.id, disposition_state: "NOT_ADVANCED" });
+    expect(queryFile<{ type: string; recipient_user_id: string }>(dbPath, "SELECT type, recipient_user_id FROM notifications")).toEqual([]);
+    expect(queryFile<{ decision_id: string; released_at: string | null; rendered_text: string }>(dbPath, "SELECT decision_id, released_at, rendered_text FROM applicant_explanations")[0])
+      .toEqual(expect.objectContaining({ decision_id: decision.id, released_at: null, rendered_text: expect.stringContaining("mandatory requirement") }));
+    expect(getApplicantApplicationDetail(dbPath, "seeker", "application")).toMatchObject({
+      dispositionState: "NOT_ADVANCED",
+      criteriaSet: { id: "criteria", status: "PUBLISHED", authoringState: "STRUCTURED" },
+    });
+    expect(getReleasedApplicantExplanation(dbPath, "seeker", "application")).toBeNull();
+
+    const released = releaseApplicantExplanation(dbPath, actor, "application");
+    expect(released).toMatchObject({ releasedAt: expect.any(String), notificationId: expect.any(String) });
     expect(queryFile<{ type: string; recipient_user_id: string }>(dbPath, "SELECT type, recipient_user_id FROM notifications")[0])
       .toEqual({ type: "DECISION_AVAILABLE", recipient_user_id: "seeker" });
-    expect(queryFile<{ decision_id: string; released_at: string | null; rendered_text: string }>(dbPath, "SELECT decision_id, released_at, rendered_text FROM applicant_explanations")[0])
-      .toEqual(expect.objectContaining({ decision_id: decision.id, rendered_text: expect.stringContaining("mandatory requirement") }));
+    expect(getReleasedApplicantExplanation(dbPath, "seeker", "application")).toEqual(expect.objectContaining({
+      decisionId: decision.id,
+      renderedText: expect.stringContaining("mandatory requirement"),
+    }));
     expect(() => runFile(dbPath, "UPDATE applicant_explanations SET rendered_text = ?", ["changed"])).toThrow(
       "applicant explanations are immutable after release",
     );
