@@ -12,6 +12,20 @@ Local development: `createdb careersrx` (and `createdb careersrx_test` for Vites
 PostgreSQL 14+, then set `DATABASE_URL=postgres://<user>@localhost:5432/careersrx`. Tests create an
 isolated schema per case on `careersrx_test` (`DATABASE_URL_TEST` overrides the default).
 
+## Railway deployment
+
+- Services: the app plus a PostgreSQL database. No volume is required — nothing writes local files.
+- `DATABASE_URL`: the Railway Postgres connection string (use the internal hostname when both
+  services share a project).
+- Build command: `npm run build`. Start: `npm run start`. Migrations run automatically on the first
+  query after boot, serialized across replicas by a Postgres advisory lock.
+- Healthcheck path: `/api/health` — 200 once the applied migration head matches the build.
+
+Required production variables: `DATABASE_URL`, `CAREERSRX_APP_URL` (public origin, used for account
+email links), `CAREERSRX_ALLOWED_ORIGINS`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (or `RESEND_FROM`),
+`CRON_SECRET`. Optional: `OPENAI_API_KEY`/`OPENAI_MODEL` (evaluation completes as
+PARTIAL_DETERMINISTIC without them), `PGPOOL_MAX`.
+
 ## Production configuration
 
 Set `CAREERSRX_ALLOWED_ORIGINS` to a comma-separated allowlist of full origins. The server refuses to load the protected mutation layer in production without it; request `Host` headers are never used as a production fallback.
