@@ -147,6 +147,8 @@ export type SandboxSnapshot = {
   persistence: {
     kind: "sqlite";
     path: string;
+    source: string;
+    railwayVolumeAttached: boolean;
   };
 };
 

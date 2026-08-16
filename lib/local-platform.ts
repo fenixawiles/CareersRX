@@ -1,12 +1,12 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import path from "node:path";
 import slugify from "slugify";
+import { careersRxSqlitePath } from "@/lib/sqlite-path";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import { getSandboxSnapshot } from "@/lib/sqlite-sandbox";
 
-const dbPath = path.join(process.cwd(), "data", "careersrx-live-resume-sandbox.sqlite");
+const dbPath = careersRxSqlitePath();
 
 export type LocalCompany = {
   id: string;

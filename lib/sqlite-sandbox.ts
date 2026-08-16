@@ -1,7 +1,11 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import path from "node:path";
+import {
+  careersRxSqlitePath,
+  careersRxSqlitePersistenceInfo,
+  warnIfVolatileSqliteStorage,
+} from "@/lib/sqlite-path";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import type {
   SandboxAuditEntry,
@@ -23,8 +27,7 @@ import type {
 } from "@/lib/sandbox-types";
 
 const DEMO_SANDBOX_ID = "local-blank-sandbox";
-const dbDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dbDir, "careersrx-live-resume-sandbox.sqlite");
+const dbPath = careersRxSqlitePath();
 
 function now() {
   return new Date().toISOString();
@@ -44,6 +47,7 @@ function querySql<T>(sql: string): T[] {
 }
 
 function initializeDatabase() {
+  warnIfVolatileSqliteStorage("sqlite-sandbox");
   runSql(`
     PRAGMA journal_mode = WAL;
 
@@ -957,7 +961,7 @@ export function getSandboxSnapshot(sandboxId = DEMO_SANDBOX_ID): SandboxSnapshot
     ).map(mapAudit),
     persistence: {
       kind: "sqlite",
-      path: dbPath,
+      ...careersRxSqlitePersistenceInfo(),
     },
   };
 }

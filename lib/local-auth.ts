@@ -1,9 +1,9 @@
 import "server-only";
 
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
-import path from "node:path";
 import { cookies } from "next/headers";
 import { createLocalCompanyForOwner } from "@/lib/local-platform";
+import { careersRxSqlitePath, warnIfVolatileSqliteStorage } from "@/lib/sqlite-path";
 import { createSandboxProfile } from "@/lib/sqlite-sandbox";
 import { querySqlFile, runSqlFile } from "@/lib/sqlite-runtime";
 import type { SandboxSignupInput } from "@/lib/sandbox-types";
@@ -11,8 +11,7 @@ import type { SandboxSignupInput } from "@/lib/sandbox-types";
 export const LOCAL_SESSION_COOKIE = "careeros_local_session";
 export type LocalUserRole = "SEEKER" | "EMPLOYER";
 
-const dbDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dbDir, "careersrx-live-resume-sandbox.sqlite");
+const dbPath = careersRxSqlitePath();
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 30;
 
 export type LocalUser = {
@@ -52,6 +51,7 @@ function querySql<T>(sql: string): T[] {
 }
 
 function initializeLocalAuth() {
+  warnIfVolatileSqliteStorage("local-auth");
   runSql(`
     PRAGMA journal_mode = WAL;
 
