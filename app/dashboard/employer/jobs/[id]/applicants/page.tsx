@@ -6,6 +6,9 @@ import { getCompanyForUser, getJobForCompany, listApplicationsForCompany } from 
 import { DashboardHeading, Card, EmptyState } from "@/components/dashboard/DashboardUI";
 import { ApplicationStatusBadge } from "@/components/jobs/StatusBadge";
 import { Button } from "@/components/ui/Button";
+import { ApplicantEvaluationPanel } from "@/components/employer/ApplicantEvaluationPanel";
+import { getEmployerApplicationEvaluation } from "@/lib/evaluation/employer-read";
+import { evaluationDbPath } from "@/lib/evaluation/route-auth";
 import { postedAgo } from "@/lib/utils";
 
 type Params = Promise<{ id: string }>;
@@ -42,7 +45,9 @@ export default async function ApplicantsPage({ params }: { params: Params }) {
         />
       ) : (
         <div className="space-y-3">
-          {applications.map((app) => (
+          {applications.map((app) => {
+            const evaluation = getEmployerApplicationEvaluation(evaluationDbPath(), company.id, app.id);
+            return (
             <Card key={app.id}>
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -77,8 +82,10 @@ export default async function ApplicantsPage({ params }: { params: Params }) {
                   </div>
                 </div>
               </div>
+              {evaluation ? <ApplicantEvaluationPanel applicationId={app.id} evaluation={evaluation} /> : null}
             </Card>
-          ))}
+          );
+          })}
         </div>
       )}
     </div>
