@@ -13,7 +13,7 @@ import {
   DEFAULT_EEO_STATEMENT,
 } from "@/lib/constants";
 
-const STEPS = ["Basics", "Location", "Details", "Review"];
+const STEPS = ["Basics", "Location", "Details", "Criteria", "Review"];
 
 type FormState = {
   title: string;
@@ -32,6 +32,8 @@ type FormState = {
   payType: string;
   eeoStatement: string;
 };
+
+type DraftCriterion = { label: string; statement: string; disposition: "MANDATORY" | "PREFERRED" };
 
 const initial: FormState = {
   title: "",
@@ -57,6 +59,8 @@ export function PostJobWizard() {
   const [submitted, setSubmitted] = useState(false);
   const [status, setStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [criteria, setCriteria] = useState<DraftCriterion[]>([]);
+  const [criterionDraft, setCriterionDraft] = useState<DraftCriterion>({ label: "", statement: "", disposition: "MANDATORY" });
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -79,14 +83,62 @@ export function PostJobWizard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(form),
     });
-    setSubmitting(false);
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as { error?: string } | null;
       setStatus(data?.error ?? "Could not save job posting.");
+      setSubmitting(false);
       return;
     }
+    const data = await response.json().catch(() => null) as { job?: { id?: string } } | null;
+    const jobId = data?.job?.id;
+    if (!jobId) {
+      setStatus("Job was saved, but its criteria draft could not be opened.");
+      setSubmitting(false);
+      setSubmitted(true);
+      return;
+    }
+    if (criteria.length) {
+      const setsResponse = await fetch(`/api/employer/jobs/${jobId}/criteria`);
+      const setsData = await setsResponse.json().catch(() => null) as { criteriaSets?: Array<{ id: string; status: string }> } | null;
+      const set = setsData?.criteriaSets?.find((item) => item.status === "DRAFT");
+      if (!setsResponse.ok || !set) {
+        setStatus("Job was saved, but its criteria draft could not be opened.");
+        setSubmitting(false);
+        setSubmitted(true);
+        return;
+      }
+      const csrf = await fetch("/api/auth/csrf");
+      const token = (await csrf.json().catch(() => null) as { token?: string } | null)?.token;
+      for (const criterion of criteria) {
+        const criterionResponse = await fetch(`/api/employer/criteria-sets/${set.id}/criteria`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-csrf-token": token ?? "" },
+          body: JSON.stringify({
+            kind: criterion.disposition === "PREFERRED" ? "PREFERRED_QUALIFICATION" : "MINIMUM_QUALIFICATION",
+            disposition: criterion.disposition,
+            evaluationMode: "EVIDENCE_MAPPING",
+            label: criterion.label,
+            statement: criterion.statement,
+          }),
+        });
+        if (!criterionResponse.ok) {
+          const failure = await criterionResponse.json().catch(() => null) as { error?: string } | null;
+          setStatus(`Job saved, but a criterion was not added: ${failure?.error ?? "unknown error"}`);
+          setSubmitting(false);
+          setSubmitted(true);
+          return;
+        }
+      }
+    }
+    setSubmitting(false);
     setStatus("");
     setSubmitted(true);
+  }
+
+  function addCriterion() {
+    if (!criterionDraft.label.trim() || !criterionDraft.statement.trim()) return;
+    setCriteria((current) => [...current, { ...criterionDraft, label: criterionDraft.label.trim(), statement: criterionDraft.statement.trim() }]);
+    setCriterionDraft({ label: "", statement: "", disposition: "MANDATORY" });
   }
 
   if (submitted) {
@@ -108,6 +160,8 @@ export function PostJobWizard() {
             size="sm"
             onClick={() => {
               setForm(initial);
+              setCriteria([]);
+              setCriterionDraft({ label: "", statement: "", disposition: "MANDATORY" });
               setStep(0);
               setSubmitted(false);
             }}
@@ -318,6 +372,29 @@ export function PostJobWizard() {
         )}
 
         {step === 3 && (
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Structured criteria</h3>
+              <p className="mt-1 text-sm text-muted">Add posted job requirements for consistent review. Leave this empty to keep the job unstructured.</p>
+            </div>
+            <Field label="Criterion label">
+              <input value={criterionDraft.label} onChange={(event) => setCriterionDraft((current) => ({ ...current, label: event.target.value }))} placeholder="e.g. Active RN license" className="input" />
+            </Field>
+            <Field label="Requirement">
+              <textarea value={criterionDraft.statement} onChange={(event) => setCriterionDraft((current) => ({ ...current, statement: event.target.value }))} placeholder="Describe the job-related requirement." rows={3} className="input" />
+            </Field>
+            <Field label="Disposition">
+              <select value={criterionDraft.disposition} onChange={(event) => setCriterionDraft((current) => ({ ...current, disposition: event.target.value as DraftCriterion["disposition"] }))} className="input sm:max-w-xs">
+                <option value="MANDATORY">Mandatory</option>
+                <option value="PREFERRED">Preferred</option>
+              </select>
+            </Field>
+            <Button type="button" size="sm" variant="outline" onClick={addCriterion}>Add criterion</Button>
+            {criteria.length ? <ul className="space-y-2">{criteria.map((criterion, index) => <li key={`${criterion.label}-${index}`} className="flex items-start justify-between gap-3 rounded-xl border border-border p-3 text-sm"><div><p className="font-medium text-foreground">{criterion.label}</p><p className="text-muted">{criterion.statement}</p></div><button type="button" className="text-primary" onClick={() => setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></li>)}</ul> : null}
+          </div>
+        )}
+
+        {step === 4 && (
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-foreground">
               {form.title || "Untitled role"}

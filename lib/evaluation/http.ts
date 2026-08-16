@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { assertCsrf, CsrfConfigurationError, CsrfError } from "@/lib/http/csrf";
+import { CriteriaAuthoringError } from "@/lib/criteria/authoring";
 import { EvaluationPersistenceError, type EmployerActor } from "@/lib/evaluation/persistence";
 import { requireEvaluationActor } from "@/lib/evaluation/route-auth";
 
@@ -14,6 +15,10 @@ export function evaluationErrorResponse(error: unknown) {
   if (error instanceof EvaluationPersistenceError) {
     const status =
       error.code === "ACCESS_DENIED" ? 403 : error.code === "NOT_FOUND" ? 404 : error.code === "UNGROUNDED_DECISION" ? 422 : error.code === "INVALID_STATE" || error.code === "NOT_EVALUABLE" ? 409 : 400;
+    return NextResponse.json({ error: error.message, code: error.code }, { status });
+  }
+  if (error instanceof CriteriaAuthoringError) {
+    const status = error.code === "ACCESS_DENIED" ? 403 : error.code === "NOT_FOUND" ? 404 : error.code === "INVALID_STATE" ? 409 : 422;
     return NextResponse.json({ error: error.message, code: error.code }, { status });
   }
   console.error("[careersrx/evaluation] request failed", error);
@@ -32,7 +37,7 @@ export async function withApiHandler<TContext>(
   const auth = await requireEvaluationActor();
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
   try {
-    await assertCsrf(request);
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) await assertCsrf(request);
     return await handler({ actor: auth.actor, context });
   } catch (error) {
     return evaluationErrorResponse(error);
