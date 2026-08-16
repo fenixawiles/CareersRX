@@ -134,7 +134,7 @@ function ApplyModal({ jobId, jobTitle, companyName, onClose }: Props & { onClose
                 fetch("/api/account/applications", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ jobId, coverLetter, licenseConfirmed }),
+                  body: JSON.stringify({ jobId, coverLetter, licenseConfirmed, accommodationNoticeShown: true }),
                 }).then(async (response) => {
                   if (!response.ok) {
                     const data = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -190,6 +190,9 @@ function ApplyModal({ jobId, jobTitle, companyName, onClose }: Props & { onClose
                   </label>
                 </div>
               </div>
+
+              {/* Cover letter */}
+              <p className="rounded-xl bg-primary-light/50 p-3 text-xs text-primary-dark">Need an accommodation for the application or interview process? You may request one after submitting. This notice is recorded before any automatic criteria outcome.</p>
 
               {/* Cover letter */}
               <div>
