@@ -22,8 +22,10 @@ isolated schema per case on `careersrx_test` (`DATABASE_URL_TEST` overrides the 
 - Healthcheck path: `/api/health` — 200 once the applied migration head matches the build.
 
 Required production variables: `DATABASE_URL`, `CAREERSRX_APP_URL` (public origin, used for account
-email links), `CAREERSRX_ALLOWED_ORIGINS`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (or `RESEND_FROM`),
-`CRON_SECRET`. Optional: `OPENAI_API_KEY`/`OPENAI_MODEL` (evaluation completes as
+email links — production canonical is `https://careersrx.life`), `CAREERSRX_ALLOWED_ORIGINS`
+(`https://careersrx.life,https://www.careersrx.life`), `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (or
+`RESEND_FROM`; verify `careersrx.life` as a Resend sending domain so account email passes
+DKIM/SPF), `CRON_SECRET`. Optional: `OPENAI_API_KEY`/`OPENAI_MODEL` (evaluation completes as
 PARTIAL_DETERMINISTIC without them), `PGPOOL_MAX`.
 
 ## Production configuration
