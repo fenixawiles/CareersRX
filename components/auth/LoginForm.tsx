@@ -57,7 +57,7 @@ export function LoginForm() {
           <label htmlFor="password" className="text-sm font-medium text-foreground">
             Password
           </label>
-          <AuthLink href="/forgot-password">Forgot?</AuthLink>
+          <AuthLink href="/reset-password">Forgot?</AuthLink>
         </div>
         <input
           id="password"

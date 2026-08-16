@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { DashboardNav, type NavItem } from "@/components/dashboard/DashboardNav";
 import { getCurrentLocalUser } from "@/lib/local-auth";
+import { VerifyEmailBanner } from "@/components/auth/VerifyEmailBanner";
 
 // Dashboards are per-user and must render on demand, never statically cached.
 export const dynamic = "force-dynamic";
@@ -25,7 +26,10 @@ export default async function SeekerLayout({ children }: { children: React.React
   return (
     <div className="mx-auto flex max-w-[1760px] flex-col lg:flex-row">
       <DashboardNav items={NAV} title="Job Seeker" />
-      <div className="min-w-0 flex-1 px-4 py-6 sm:px-5">{children}</div>
+      <div className="min-w-0 flex-1 px-4 py-6 sm:px-5">
+        {user.emailVerifiedAt ? null : <VerifyEmailBanner role="SEEKER" />}
+        {children}
+      </div>
     </div>
   );
 }

@@ -11,6 +11,9 @@ export async function POST(_request: Request, context: RouteContext) {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
   if (user.role !== "EMPLOYER") return NextResponse.json({ error: "Employer account required" }, { status: 403 });
+  if (!user.emailVerifiedAt) {
+    return NextResponse.json({ error: "Verify your email address before publishing a job. Check your inbox for the confirmation link." }, { status: 403 });
+  }
   const company = await getCompanyForUser(user.id);
   if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
   const { id } = await context.params;

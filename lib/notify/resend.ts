@@ -20,10 +20,10 @@ function appBaseUrl() {
 async function claimPendingEmail(workerId: string): Promise<ClaimedEmail | null> {
   return tx(async () => {
     const candidate = await queryOne<ClaimedEmail>(
-      `SELECT outbox.id, outbox.notification_id, user.email, notification.type
+      `SELECT outbox.id, outbox.notification_id, account.email, notification.type
        FROM notification_outbox outbox
        JOIN notifications notification ON notification.id = outbox.notification_id
-       JOIN users user ON user.id = notification.recipient_user_id
+       JOIN users account ON account.id = notification.recipient_user_id
        WHERE outbox.channel = 'EMAIL'
          AND (outbox.state = 'PENDING' OR (outbox.state = 'CLAIMED' AND outbox.lease_expires_at < ?))
          AND outbox.next_attempt_at <= ?
@@ -35,7 +35,7 @@ async function claimPendingEmail(workerId: string): Promise<ClaimedEmail | null>
     const result = await run(
       `UPDATE notification_outbox
        SET state = 'CLAIMED', attempts = attempts + 1, claimed_by = ?, claimed_at = ?,
-           lease_expires_at = datetime(?, '+5 minutes'), updated_at = ?
+           lease_expires_at = ?::timestamptz + interval '5 minutes', updated_at = ?
        WHERE id = ? AND (state = 'PENDING' OR (state = 'CLAIMED' AND lease_expires_at < ?))`,
       [workerId, claimedAt, claimedAt, claimedAt, candidate.id, claimedAt],
     );
@@ -54,8 +54,8 @@ export async function deliverNextNotificationEmail(workerId: string) {
       applicationPath: `${appBaseUrl()}/dashboard/seeker/applications`,
     });
     const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.RESEND_FROM_EMAIL;
-    if (!apiKey || !from) throw new Error("RESEND_API_KEY and RESEND_FROM_EMAIL are required to deliver notification email.");
+    const from = process.env.RESEND_FROM_EMAIL ?? process.env.RESEND_FROM;
+    if (!apiKey || !from) throw new Error("RESEND_API_KEY and RESEND_FROM_EMAIL (or RESEND_FROM) are required to deliver notification email.");
     const result = await new Resend(apiKey).emails.send({ from, to: [claimed.email], subject: rendered.subject, text: rendered.text });
     if (result.error) throw new Error(result.error.message);
     await run(
@@ -70,7 +70,7 @@ export async function deliverNextNotificationEmail(workerId: string) {
     await run(
       `UPDATE notification_outbox
        SET state = CASE WHEN attempts >= max_attempts THEN 'DEAD_LETTERED' ELSE 'PENDING' END,
-           next_attempt_at = datetime('now', '+5 minutes'), lease_expires_at = NULL,
+           next_attempt_at = now() + interval '5 minutes', lease_expires_at = NULL,
            last_error_code = 'DELIVERY_FAILED', last_error_detail = ?, updated_at = ?
        WHERE id = ? AND state = 'CLAIMED' AND claimed_by = ?`,
       [message, now(), claimed.id, workerId],

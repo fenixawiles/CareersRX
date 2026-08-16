@@ -203,11 +203,37 @@ export async function createLocalEmployerAccount(input: LocalEmployerSignupInput
   return { ok: true as const, user, company };
 }
 
+const LOCKOUT_THRESHOLD = 10;
+const LOCKOUT_MS = 15 * 60 * 1000;
+
 export async function authenticateLocalUser(email: string, password: string) {
   const row = await getUserRowByEmail(email);
   if (!row) return null;
+
+  const lockedUntil = row.locked_until ? new Date(String(row.locked_until)).getTime() : 0;
+  if (lockedUntil > Date.now()) return null;
+
   const passwordHash = String(row.password_hash ?? "");
-  if (!verifyPassword(password, passwordHash)) return null;
+  if (!verifyPassword(password, passwordHash)) {
+    const failures = Number(row.failed_logins ?? 0) + 1;
+    await run(
+      "UPDATE users SET failed_logins = ?, locked_until = ?, updated_at = ? WHERE id = ?",
+      [
+        failures,
+        failures >= LOCKOUT_THRESHOLD ? new Date(Date.now() + LOCKOUT_MS).toISOString() : null,
+        now(),
+        String(row.id),
+      ],
+    );
+    return null;
+  }
+
+  if (Number(row.failed_logins ?? 0) > 0 || row.locked_until) {
+    await run("UPDATE users SET failed_logins = 0, locked_until = NULL, updated_at = ? WHERE id = ?", [
+      now(),
+      String(row.id),
+    ]);
+  }
   return mapUser(row);
 }
 

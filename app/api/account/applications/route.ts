@@ -16,6 +16,9 @@ export async function POST(request: Request) {
   const user = await getCurrentLocalUser();
   if (!user) return NextResponse.json({ error: "Log in required" }, { status: 401 });
   if (user.role !== "SEEKER") return NextResponse.json({ error: "Job seeker account required" }, { status: 403 });
+  if (!user.emailVerifiedAt) {
+    return NextResponse.json({ error: "Verify your email address before applying. Check your inbox for the confirmation link." }, { status: 403 });
+  }
   const body = (await request.json().catch(() => null)) as {
     jobId?: unknown;
     coverLetter?: unknown;

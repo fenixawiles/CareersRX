@@ -6,6 +6,7 @@ import {
   sessionCookieOptions,
 } from "@/lib/local-auth";
 import type { LocalSignupInput } from "@/lib/local-auth";
+import { sendVerificationEmail } from "@/lib/auth/verification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
+  await sendVerificationEmail(result.user);
   const session = await createLocalSession(result.user.id);
   const response = NextResponse.json(
     { user: result.user, dashboardPath: dashboardPathForUser(result.user) },
